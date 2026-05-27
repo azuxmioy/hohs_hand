@@ -1,0 +1,44 @@
+model:
+  base_model: "black-forest-labs/FLUX.1-Fill-dev"
+  controlnet:
+    # Smaller than full FLUX (19 double + 38 single) to fit in 24 GB
+    num_layers: 4
+    num_single_layers: 8
+    # 64 = packed VAE latents (16ch × 2x2 patch). ControlNet receives only the
+    # noisy latents; the masked-image concatenation happens inside the transformer.
+    in_channels: 64
+    attention_head_dim: 128
+    num_attention_heads: 24
+    joint_attention_dim: 4096
+    pooled_projection_dim: 768
+    guidance_embeds: false
+
+training:
+  image_size: 256
+  batch_size: 1
+  gradient_accumulation_steps: 4    # effective batch = 4
+  num_train_epochs: 200
+  lr: 1.0e-4
+  lr_warmup_steps: 200
+  mixed_precision: bf16
+  gradient_checkpointing: true
+  save_every: 20
+  log_every: 10
+  max_grad_norm: 1.0
+  controlnet_conditioning_scale: 1.0
+
+data:
+  hdf5_path: /data/hohs2/datasets/data.h5
+  num_workers: 4
+  val_split: 0.1
+  # Composite condition: skeleton overlaid on UV map
+  condition_mode: skeleton_on_uv   # options: skeleton_on_uv | uv_only | skeleton_only
+
+logging:
+  project: hohs_hand_flux
+  run_name: flux_fill_controlnet
+
+output:
+  dir: /data/hohs2/outputs/flux_controlnet
+  checkpoints: /data/hohs2/checkpoints/flux_controlnet
+  embeddings_cache: /data/hohs2/outputs/flux_controlnet/text_embeddings.pt

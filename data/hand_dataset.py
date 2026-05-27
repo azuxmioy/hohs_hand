@@ -171,17 +171,31 @@ class HandDataset(Dataset):
         skeleton_t = to_t(skel_pil)                        # (3, H, W)
         uv_t       = to_t(uv_pil)                          # (3, H, W)
 
+        # Inpainting inputs -----------------------------------------------
+        # mask_binary: 1 where hand is (region to inpaint), 0 elsewhere
+        mask_binary = (mask_t > 0).float()                 # (1, H, W)
+        masked_image_t = image_t * (1.0 - mask_binary)    # (3, H, W) hand zeroed out
+
+        # ControlNet condition: skeleton lines overlaid on UV map.
+        # Skeleton has black background; wherever it is bright, use skeleton
+        # colour; elsewhere show UV. Keeps both pose and texture info in RGB.
+        skel_alpha  = (skeleton_t.max(dim=0, keepdim=True).values + 1.0) / 2.0  # [0,1]
+        condition_t = uv_t * (1.0 - skel_alpha) + skeleton_t * skel_alpha       # (3, H, W)
+
         kp2d_norm = torch.from_numpy(kp2d / self.image_size).float()  # (21,2) in [0,1]
         kp3d_t    = torch.from_numpy(kp3d).float()                    # (21,3)
 
         return {
-            "image":        image_t,
-            "mask":         mask_t,
-            "skeleton":     skeleton_t,
-            "uv":           uv_t,
-            "keypoints_2d": kp2d_norm,
-            "keypoints_3d": kp3d_t,
-            "is_right":     torch.tensor(is_right, dtype=torch.bool),
+            "image":         image_t,          # (3,H,W) target full image
+            "masked_image":  masked_image_t,   # (3,H,W) image with hand removed
+            "mask":          mask_t,           # (1,H,W) hand region, [-1,1]
+            "mask_binary":   mask_binary,      # (1,H,W) hand region, {0,1}
+            "condition":     condition_t,      # (3,H,W) skeleton-on-UV composite
+            "skeleton":      skeleton_t,       # (3,H,W) raw skeleton
+            "uv":            uv_t,             # (3,H,W) raw UV map
+            "keypoints_2d":  kp2d_norm,        # (21,2) in [0,1]
+            "keypoints_3d":  kp3d_t,           # (21,3) metric
+            "is_right":      torch.tensor(is_right, dtype=torch.bool),
         }
 
 
