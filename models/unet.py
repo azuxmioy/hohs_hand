@@ -137,6 +137,7 @@ class UNet(nn.Module):
             else:
                 self.up_samples.append(nn.Identity())
 
+        self.num_res_blocks = num_res_blocks
         self.output_norm = nn.GroupNorm(32, ch)
         self.output_conv = nn.Conv2d(ch, out_channels, 3, padding=1)
 
@@ -149,8 +150,8 @@ class UNet(nn.Module):
 
         # encode
         block_idx = 0
-        for i, ds in enumerate(self.down_samples):
-            for _ in range(2):  # res + attn pair
+        for ds in self.down_samples:
+            for _ in range(self.num_res_blocks):
                 res, attn = self.down_blocks[block_idx], self.down_blocks[block_idx + 1]
                 block_idx += 2
                 h = res(h, t_emb) if isinstance(res, ResBlock) else res(h)
@@ -167,8 +168,8 @@ class UNet(nn.Module):
 
         # decode
         block_idx = 0
-        for i, us in enumerate(self.up_samples):
-            for _ in range(3):  # num_res_blocks + 1 pairs
+        for us in self.up_samples:
+            for _ in range(self.num_res_blocks + 1):
                 res, attn = self.up_blocks[block_idx], self.up_blocks[block_idx + 1]
                 block_idx += 2
                 h = torch.cat([h, hs.pop()], dim=1)
