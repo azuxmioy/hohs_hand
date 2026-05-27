@@ -215,7 +215,7 @@ def run_inference(
         # Decode: unpack (B,seq,64) → (B,16,H/8,W/8) → (B,3,H,W)
         lat_4d = unpack_latents(latents, image_size // 8, image_size // 8)
         lat_4d = lat_4d / vae.config.scaling_factor + vae.config.shift_factor
-        generated = vae.decode(lat_4d).sample.clamp(-1, 1)
+        generated = vae.decode(lat_4d.to(dtype)).sample.clamp(-1, 1)
 
         results.append({
             "original":  image[0].cpu().float(),
