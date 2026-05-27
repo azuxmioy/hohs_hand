@@ -130,9 +130,111 @@ def prepare_image_ids(height: int, width: int, device) -> torch.Tensor:
     return ids.reshape(h * w, 3)
 
 
-def get_sigmas(timesteps: torch.Tensor) -> torch.Tensor:
-    """Flow matching: sigma_t = t (linear schedule)."""
-    return timesteps.float()
+# ---------------------------------------------------------------------------
+# Inference
+# ---------------------------------------------------------------------------
+
+@torch.no_grad()
+def run_inference(
+    transformer, vae, controlnet, val_loader,
+    prompt_embeds, pooled_prompt_embeds,
+    device, dtype, image_size,
+    num_steps=20, num_samples=4, guidance_scale=3.5,
+):
+    """
+    Euler-method sampling for FLUX.1-Fill + ControlNet.
+    Returns a list of dicts: {original, masked, condition, generated} as CPU tensors.
+
+    Flow: x_1 = noise → x_0 = clean image
+    Euler step: x_{t-dt} = x_t - dt * v_pred   (v = noise - x_0)
+    """
+    controlnet.eval()
+    results = []
+
+    img_ids = prepare_image_ids(image_size, image_size, device)
+    txt_ids = torch.zeros(prompt_embeds.shape[1], 3, device=device, dtype=dtype)
+    timesteps = torch.linspace(1.0, 1.0 / num_steps, num_steps, device=device, dtype=dtype)
+
+    for batch in val_loader:
+        if len(results) >= num_samples:
+            break
+
+        B = 1
+        image        = batch["image"][:B].to(device, dtype=dtype)
+        masked_image = batch["masked_image"][:B].to(device, dtype=dtype)
+        mask_binary  = batch["mask_binary"][:B].to(device, dtype=dtype)
+        condition    = batch["condition"][:B].to(device, dtype=dtype)
+
+        masked_image_latents = encode_images(vae, masked_image)
+        condition_latents    = encode_images(vae, condition)
+        mask_packed          = pack_mask(mask_binary, vae_scale_factor=8).to(device)
+
+        seq_len = (image_size // 16) ** 2
+        latents = torch.randn(B, seq_len, 64, device=device, dtype=dtype)
+
+        pe  = prompt_embeds.expand(B, -1, -1).to(device)
+        ppe = pooled_prompt_embeds.expand(B, -1).to(device)
+        guidance = torch.full((B,), guidance_scale, device=device, dtype=dtype)
+
+        for i, t_val in enumerate(timesteps):
+            t_batch = torch.full((B,), t_val.item() * 1000, device=device, dtype=dtype)
+            noisy_model_input = torch.cat([latents, masked_image_latents, mask_packed], dim=-1)
+
+            cn_block, cn_single = controlnet(
+                hidden_states=latents,
+                controlnet_cond=condition_latents,
+                conditioning_scale=1.0,
+                timestep=t_batch,
+                guidance=guidance,
+                encoder_hidden_states=pe,
+                pooled_projections=ppe,
+                img_ids=img_ids,
+                txt_ids=txt_ids,
+                return_dict=False,
+            )
+            v_pred = transformer(
+                hidden_states=noisy_model_input,
+                timestep=t_batch,
+                guidance=guidance,
+                encoder_hidden_states=pe,
+                pooled_projections=ppe,
+                img_ids=img_ids,
+                txt_ids=txt_ids,
+                controlnet_block_samples=cn_block,
+                controlnet_single_block_samples=cn_single,
+                return_dict=False,
+            )[0]
+
+            dt = 1.0 / num_steps
+            latents = latents - dt * v_pred
+
+        # Decode: unpack (B,seq,64) → (B,16,H/8,W/8) → (B,3,H,W)
+        lat_4d = unpack_latents(latents, image_size // 8, image_size // 8)
+        lat_4d = lat_4d / vae.config.scaling_factor + vae.config.shift_factor
+        generated = vae.decode(lat_4d).sample.clamp(-1, 1)
+
+        results.append({
+            "original":  image[0].cpu().float(),
+            "masked":    masked_image[0].cpu().float(),
+            "condition": condition[0].cpu().float(),
+            "generated": generated[0].cpu().float(),
+        })
+
+    controlnet.train()
+    return results
+
+
+def make_image_grid(results):
+    """Stack results into a wandb-loggable grid: cols = [orig, masked, cond, gen]."""
+    import numpy as np
+    rows = []
+    for r in results:
+        row = torch.stack([r["original"], r["masked"], r["condition"], r["generated"]], dim=0)
+        row = (row * 0.5 + 0.5).clamp(0, 1)        # [-1,1] → [0,1]
+        rows.append(row)
+    grid = torch.cat(rows, dim=0)                   # (N*4, 3, H, W)
+    grid_np = (grid.permute(0, 2, 3, 1).numpy() * 255).astype(np.uint8)
+    return grid_np                                   # (N*4, H, W, 3)
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +418,31 @@ def train(cfg):
             ckpt_dir = f"{cfg.output.checkpoints}/epoch_{epoch+1:04d}"
             accelerator.unwrap_model(controlnet).save_pretrained(ckpt_dir)
             logger.info(f"Saved ControlNet → {ckpt_dir}")
+
+        # -- Eval: run inference and log images to wandb --
+        if (epoch + 1) % cfg.training.eval_every == 0 and accelerator.is_main_process:
+            logger.info(f"Running inference at epoch {epoch+1} …")
+            results = run_inference(
+                transformer=transformer,
+                vae=vae,
+                controlnet=accelerator.unwrap_model(controlnet),
+                val_loader=val_loader,
+                prompt_embeds=prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                device=device,
+                dtype=dtype,
+                image_size=cfg.training.image_size,
+                num_steps=cfg.training.num_inference_steps,
+                num_samples=cfg.training.num_eval_samples,
+            )
+            if results:
+                grid_np = make_image_grid(results)
+                # Each row in grid_np is one panel (original / masked / condition / generated)
+                wandb.log(
+                    {"val/samples": [wandb.Image(grid_np[i]) for i in range(len(grid_np))]},
+                    step=global_step,
+                )
+            controlnet.train()
 
     accelerator.end_training()
 

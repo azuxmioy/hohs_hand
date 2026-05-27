@@ -16,7 +16,7 @@ model:
 training:
   image_size: 256
   batch_size: 1
-  gradient_accumulation_steps: 4    # effective batch = 4
+  gradient_accumulation_steps: 4    # effective batch = num_gpus * batch_size * grad_accum
   num_train_epochs: 200
   lr: 1.0e-4
   lr_warmup_steps: 200
@@ -24,6 +24,9 @@ training:
   gradient_checkpointing: true
   save_every: 20
   log_every: 10
+  eval_every: 10          # run inference and log images every N epochs
+  num_eval_samples: 4     # number of val samples to visualise
+  num_inference_steps: 20 # Euler steps during inference
   max_grad_norm: 1.0
   controlnet_conditioning_scale: 1.0
 
