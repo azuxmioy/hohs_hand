@@ -3,6 +3,9 @@
 # Defaults to 1 GPU. Pass --multi-gpu to use all free GPUs (check first!).
 set -e
 
+source /etc/profile
+module load cuda/12.2 gcc/13
+
 DATA_DIR="/data/hohs2"
 VENV_DIR="$DATA_DIR/envs/hohs_hand"
 REPO_DIR="$HOME/hohs_hand"
