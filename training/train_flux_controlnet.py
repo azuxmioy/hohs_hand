@@ -422,38 +422,37 @@ def train(cfg):
                             step=global_step,
                         )
 
+                    # -- Checkpoint (iteration-based) --
+                    if global_step % cfg.training.save_every_iters == 0 and accelerator.is_main_process:
+                        ckpt_dir = f"{cfg.output.checkpoints}/step_{global_step:06d}"
+                        accelerator.unwrap_model(controlnet).save_pretrained(ckpt_dir)
+                        logger.info(f"Saved ControlNet → {ckpt_dir}")
+
+                    # -- Eval (iteration-based) --
+                    if global_step % cfg.training.eval_every_iters == 0 and accelerator.is_main_process:
+                        logger.info(f"Running inference at step {global_step} …")
+                        results = run_inference(
+                            transformer=transformer,
+                            vae=vae,
+                            controlnet=accelerator.unwrap_model(controlnet),
+                            val_loader=val_loader,
+                            prompt_embeds=prompt_embeds,
+                            pooled_prompt_embeds=pooled_prompt_embeds,
+                            device=device,
+                            dtype=dtype,
+                            image_size=cfg.training.image_size,
+                            num_steps=cfg.training.num_inference_steps,
+                            num_samples=cfg.training.num_eval_samples,
+                        )
+                        if results:
+                            grid_np = make_image_grid(results)
+                            wandb.log(
+                                {"val/samples": [wandb.Image(grid_np[i]) for i in range(len(grid_np))]},
+                                step=global_step,
+                            )
+                        controlnet.train()
+
             pbar.set_postfix(loss=f"{loss.item():.4f}")
-
-        # -- Checkpoint --
-        if (epoch + 1) % cfg.training.save_every == 0 and accelerator.is_main_process:
-            ckpt_dir = f"{cfg.output.checkpoints}/epoch_{epoch+1:04d}"
-            accelerator.unwrap_model(controlnet).save_pretrained(ckpt_dir)
-            logger.info(f"Saved ControlNet → {ckpt_dir}")
-
-        # -- Eval: run inference and log images to wandb --
-        if (epoch + 1) % cfg.training.eval_every == 0 and accelerator.is_main_process:
-            logger.info(f"Running inference at epoch {epoch+1} …")
-            results = run_inference(
-                transformer=transformer,
-                vae=vae,
-                controlnet=accelerator.unwrap_model(controlnet),
-                val_loader=val_loader,
-                prompt_embeds=prompt_embeds,
-                pooled_prompt_embeds=pooled_prompt_embeds,
-                device=device,
-                dtype=dtype,
-                image_size=cfg.training.image_size,
-                num_steps=cfg.training.num_inference_steps,
-                num_samples=cfg.training.num_eval_samples,
-            )
-            if results:
-                grid_np = make_image_grid(results)
-                # Each row in grid_np is one panel (original / masked / condition / generated)
-                wandb.log(
-                    {"val/samples": [wandb.Image(grid_np[i]) for i in range(len(grid_np))]},
-                    step=global_step,
-                )
-            controlnet.train()
 
     accelerator.end_training()
 

@@ -22,9 +22,9 @@ training:
   lr_warmup_steps: 100
   mixed_precision: bf16
   gradient_checkpointing: true
-  save_every: 20
+  save_every_iters: 1000
   log_every: 10
-  eval_every: 10          # run inference and log images every N epochs
+  eval_every_iters: 500   # run inference and log images every N optimizer steps
   num_eval_samples: 4     # number of val samples to visualise
   num_inference_steps: 20 # Euler steps during inference
   max_grad_norm: 1.0
