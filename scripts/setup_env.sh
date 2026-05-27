@@ -20,8 +20,8 @@ source "$VENV_DIR/bin/activate"
 echo "==> Upgrading pip"
 pip install --upgrade pip
 
-echo "==> Installing PyTorch (CUDA 12.2)"
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu122
+echo "==> Installing PyTorch (cu121 wheels, compatible with CUDA 12.2+)"
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 
 echo "==> Installing project requirements"
 pip install -r "$REPO_DIR/requirements.txt"
