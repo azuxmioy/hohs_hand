@@ -14,7 +14,7 @@ echo "==> CUDA: $(nvcc --version | grep release)"
 echo "==> Python: $(python3 --version)"
 
 echo "==> Creating virtual environment at $VENV_DIR"
-python3 -m venv "$VENV_DIR"
+virtualenv -p python3 "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 
 echo "==> Upgrading pip"
