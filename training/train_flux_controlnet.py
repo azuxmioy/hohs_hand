@@ -167,7 +167,7 @@ def train(cfg):
             f"Text embeddings not found at {cfg.output.embeddings_cache}. "
             "Run scripts/precompute_flux_embeddings.py first."
         )
-    emb_cache = torch.load(cfg.output.embeddings_cache, map_location="cpu")
+    emb_cache = torch.load(cfg.output.embeddings_cache, map_location="cpu", weights_only=True)
     prompt_embeds        = emb_cache["prompt_embeds"].to(dtype=dtype)         # (1,512,4096)
     pooled_prompt_embeds = emb_cache["pooled_prompt_embeds"].to(dtype=dtype)  # (1,768)
 

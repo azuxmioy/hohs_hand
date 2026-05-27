@@ -11,7 +11,7 @@ model:
     num_attention_heads: 24
     joint_attention_dim: 4096
     pooled_projection_dim: 768
-    guidance_embeds: false
+    guidance_embeds: true   # FLUX.1-Fill-dev uses guidance; must match to avoid sig mismatch
 
 training:
   image_size: 256
