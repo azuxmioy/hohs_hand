@@ -33,10 +33,10 @@ cd "$REPO_DIR"
 echo "==> Current GPU usage:"
 nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total --format=csv,noheader
 
-# Collect free GPUs (< 500 MiB used, 0 % util)
+# Collect free GPUs (< 100 MiB used, 0 % util)
 FREE_GPU_LIST=$(nvidia-smi --query-gpu=index,utilization.gpu,memory.used \
     --format=csv,noheader,nounits \
-    | awk -F', ' '$2 == 0 && $3 < 500 {print $1}')
+    | awk -F', ' '$2 == 0 && $3 < 100 {print $1}')
 
 NUM_FREE=$(echo "$FREE_GPU_LIST" | grep -c '[0-9]' || true)
 
