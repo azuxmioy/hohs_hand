@@ -128,16 +128,21 @@ class HandDataset(Dataset):
 
         # -- Augmentation --
         if self.augment:
-            # Random horizontal flip (also flip keypoints and hand side)
-            if random.random() < 0.5:
-                W = img_pil.width
-                img_pil  = TF.hflip(img_pil)
-                mask_pil = TF.hflip(mask_pil)
-                skel_pil = TF.hflip(skel_pil)
-                uv_pil   = TF.hflip(uv_pil)
+            # Random 90° rotation (0, 90, 180, 270) — no reflection to
+            # preserve left/right hand consistency.
+            rot_k = random.randint(0, 3)  # number of 90° CCW rotations
+            if rot_k > 0:
+                S = img_pil.width  # square image
+                img_pil  = TF.rotate(img_pil,  rot_k * 90, interpolation=TF.InterpolationMode.BILINEAR)
+                mask_pil = TF.rotate(mask_pil, rot_k * 90, interpolation=TF.InterpolationMode.NEAREST)
+                skel_pil = TF.rotate(skel_pil, rot_k * 90, interpolation=TF.InterpolationMode.BILINEAR)
+                uv_pil   = TF.rotate(uv_pil,   rot_k * 90, interpolation=TF.InterpolationMode.BILINEAR)
                 kp2d = kp2d.copy()
-                kp2d[:, 0] = W - 1 - kp2d[:, 0]
-                is_right = not is_right
+                cx = cy = (S - 1) / 2.0
+                for _ in range(rot_k):
+                    new_x = cy - (kp2d[:, 1] - cy)
+                    new_y = cx + (kp2d[:, 0] - cx)
+                    kp2d[:, 0], kp2d[:, 1] = new_x, new_y
 
             # Random crop / resize
             i, j, h, w = T.RandomResizedCrop.get_params(
