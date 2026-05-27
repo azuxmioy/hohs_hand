@@ -28,12 +28,11 @@ from accelerate.utils import set_seed, ProjectConfiguration
 from diffusers import (
     AutoencoderKL,
     FluxControlNetModel,
-    FluxFillPipeline,
     FluxTransformer2DModel,
 )
-from diffusers.training_utils import compute_density_for_timestep_sampling
 from omegaconf import OmegaConf
 from tqdm.auto import tqdm
+from transformers import BitsAndBytesConfig
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from data.hand_dataset import make_dataloaders
@@ -46,15 +45,30 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def load_frozen_components(model_id: str, dtype: torch.dtype, device: str):
-    """Load VAE and transformer from FLUX.1-Fill; freeze everything."""
-    vae = AutoencoderKL.from_pretrained(model_id, subfolder="vae", torch_dtype=dtype).to(device)
-    transformer = FluxTransformer2DModel.from_pretrained(
-        model_id, subfolder="transformer", torch_dtype=dtype
+    """Load VAE and transformer from FLUX.1-Fill; freeze everything.
+
+    The transformer is loaded in NF4 4-bit (~6 GB vs ~24 GB in bf16) since
+    it is fully frozen — no gradients, no optimizer states needed.
+    """
+    vae = AutoencoderKL.from_pretrained(
+        model_id, subfolder="vae", torch_dtype=dtype
     ).to(device)
+
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=dtype,
+        bnb_4bit_use_double_quant=True,
+    )
+    transformer = FluxTransformer2DModel.from_pretrained(
+        model_id,
+        subfolder="transformer",
+        quantization_config=bnb_config,
+        torch_dtype=dtype,
+    )
+    # Quantized models are placed on device automatically by bitsandbytes
     vae.requires_grad_(False)
     transformer.requires_grad_(False)
-    if hasattr(transformer, "enable_gradient_checkpointing"):
-        transformer.enable_gradient_checkpointing()
     return vae, transformer
 
 

@@ -1,9 +1,9 @@
 model:
   base_model: "black-forest-labs/FLUX.1-Fill-dev"
   controlnet:
-    # Smaller than full FLUX (19 double + 38 single) to fit in 24 GB
-    num_layers: 4
-    num_single_layers: 8
+    # Small ControlNet to fit alongside NF4-quantized FLUX (6 GB)
+    num_layers: 2
+    num_single_layers: 4
     # 64 = packed VAE latents (16ch × 2x2 patch). ControlNet receives only the
     # noisy latents; the masked-image concatenation happens inside the transformer.
     in_channels: 64

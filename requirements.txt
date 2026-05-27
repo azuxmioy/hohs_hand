@@ -14,3 +14,4 @@ omegaconf>=2.3.0
 hydra-core>=1.3.0
 matplotlib>=3.8.0
 h5py>=3.10.0
+bitsandbytes>=0.43.0
