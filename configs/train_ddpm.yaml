@@ -41,5 +41,5 @@ logging:
   run_name: ddpm_baseline
 
 output:
-  dir: ./outputs
-  checkpoints: ./outputs/checkpoints
+  dir: /data/hohs2/outputs/hohs_hand
+  checkpoints: /data/hohs2/checkpoints/hohs_hand

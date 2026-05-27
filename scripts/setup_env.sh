@@ -1,9 +1,14 @@
 #!/bin/bash
-# Run this on the GPU server to create the virtual environment
+# Run this on the GPU server to create the virtual environment.
+# Large files (venv, data, checkpoints) live under /data, not $HOME.
 set -e
 
-VENV_DIR="$HOME/envs/hohs_hand"
+DATA_DIR="/data/hohs2"
+VENV_DIR="$DATA_DIR/envs/hohs_hand"
 REPO_DIR="$HOME/hohs_hand"
+
+echo "==> Creating data directory at $DATA_DIR"
+mkdir -p "$DATA_DIR/envs" "$DATA_DIR/checkpoints" "$DATA_DIR/datasets"
 
 echo "==> Creating virtual environment at $VENV_DIR"
 python3 -m venv "$VENV_DIR"
