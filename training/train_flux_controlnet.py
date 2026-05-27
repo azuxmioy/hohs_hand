@@ -79,7 +79,7 @@ def load_frozen_components(model_id: str, dtype: torch.dtype, device: str):
 def encode_images(vae, images: torch.Tensor) -> torch.Tensor:
     """Encode (B,3,H,W) in [-1,1] → packed latents (B, H/16*W/16, 64)."""
     with torch.no_grad():
-        latents = vae.encode(images).latent_dist.sample()
+        latents = vae.encode(images).latent_dist.mode()
         latents = (latents - vae.config.shift_factor) * vae.config.scaling_factor
     # Pack 2x2 spatial patches: (B,16,H/8,W/8) → (B,H/16*W/16, 64)
     return pack_latents(latents)
@@ -181,7 +181,7 @@ def run_inference(
         guidance = torch.full((B,), guidance_scale, device=device, dtype=dtype)
 
         for i, t_val in enumerate(timesteps):
-            t_batch = torch.full((B,), t_val.item() * 1000, device=device, dtype=dtype)
+            t_batch = torch.full((B,), t_val.item(), device=device, dtype=dtype)
             noisy_model_input = torch.cat([latents, masked_image_latents, mask_packed], dim=-1)
 
             cn_block, cn_single = controlnet(
@@ -377,13 +377,11 @@ def train(cfg):
                 # -- ControlNet forward --
                 # ControlNet sees only the noisy latents (64ch); masked-image
                 # concatenation is handled inside the transformer.
-                controlnet_block_samples, controlnet_single_block_samples = accelerator.unwrap_model(
-                    controlnet
-                )(
+                controlnet_block_samples, controlnet_single_block_samples = controlnet(
                     hidden_states=noisy_latents,        # (B, seq, 64)
                     controlnet_cond=condition_latents,  # (B, seq, 64)
                     conditioning_scale=cfg.training.controlnet_conditioning_scale,
-                    timestep=t * 1000,                  # FLUX expects 0-1000 range
+                    timestep=t,
                     guidance=torch.full((B,), 3.5, device=device, dtype=dtype),
                     encoder_hidden_states=pe,
                     pooled_projections=ppe,
@@ -395,7 +393,7 @@ def train(cfg):
                 # -- Transformer forward --
                 noise_pred = transformer(
                     hidden_states=noisy_model_input,
-                    timestep=t * 1000,
+                    timestep=t,
                     guidance=torch.full((B,), 3.5, device=device, dtype=dtype),
                     encoder_hidden_states=pe,
                     pooled_projections=ppe,
