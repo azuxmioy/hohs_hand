@@ -69,6 +69,10 @@ def load_frozen_components(model_id: str, dtype: torch.dtype, device: str):
     # Quantized models are placed on device automatically by bitsandbytes
     vae.requires_grad_(False)
     transformer.requires_grad_(False)
+    # Recompute activations during backward instead of storing them.
+    # Critical for multi-GPU: NF4 dequantizes to bf16 per-layer, peaking at ~24 GB
+    # without checkpointing; with it, only checkpoint boundaries are kept.
+    transformer.enable_gradient_checkpointing()
     return vae, transformer
 
 
@@ -282,6 +286,8 @@ def train(cfg):
         guidance_embeds=controlnet_cfg.guidance_embeds,
     )
     controlnet = controlnet.to(dtype=dtype)
+    if cfg.training.gradient_checkpointing:
+        controlnet.enable_gradient_checkpointing()
     controlnet.train()
 
     # -- Pre-computed text embeddings (empty prompt) --

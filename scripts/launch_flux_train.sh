@@ -62,6 +62,9 @@ fi
 
 # Step 2: train
 echo "==> Starting training with $NUM_GPUS GPU(s) …"
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export PYTORCH_CUDA_ALLOC_CONF
+
 if [ "$NUM_GPUS" -eq 1 ]; then
     CUDA_VISIBLE_DEVICES="$CUDA_VISIBLE" accelerate launch \
         --num_processes=1 \
