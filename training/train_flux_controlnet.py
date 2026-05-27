@@ -89,6 +89,28 @@ def pack_latents(latents: torch.Tensor) -> torch.Tensor:
     return latents
 
 
+def pack_mask(mask: torch.Tensor, vae_scale_factor: int = 8) -> torch.Tensor:
+    """
+    Encode the binary mask (B,1,H,W) at IMAGE resolution the same way
+    FluxFillPipeline does: pixel-fold into (B, vae_scale_factor², h_lat, w_lat)
+    then 2×2-pack → (B, h_lat/2 * w_lat/2, vae_scale_factor² × 4).
+
+    For 256×256 input with scale_factor=8:
+      (B,1,256,256) → (B,64,32,32) → (B,256,256)
+    """
+    B, _, H, W = mask.shape
+    # Remove channel dim, keeping (B, H, W)
+    mask = mask[:, 0]
+    h_lat = H // vae_scale_factor   # latent height (32 for 256px)
+    w_lat = W // vae_scale_factor   # latent width  (32 for 256px)
+    # Fold 8×8 pixel blocks into channels: (B, h_lat, 8, w_lat, 8)
+    mask = mask.view(B, h_lat, vae_scale_factor, w_lat, vae_scale_factor)
+    # (B, 8, 8, h_lat, w_lat) → (B, 64, h_lat, w_lat)
+    mask = mask.permute(0, 2, 4, 1, 3).reshape(B, vae_scale_factor ** 2, h_lat, w_lat)
+    # 2×2 patch pack: (B, 64, h_lat, w_lat) → (B, h_lat/2 * w_lat/2, 256)
+    return pack_latents(mask)
+
+
 def unpack_latents(latents: torch.Tensor, height: int, width: int) -> torch.Tensor:
     """(B, H/2*W/2, C*4) → (B, C, H, W)"""
     B, _, packed_dim = latents.shape
@@ -213,22 +235,29 @@ def train(cfg):
                 masked_image_latents = encode_images(vae, batch["masked_image"].to(dtype))
                 condition_latents    = encode_images(vae, batch["condition"].to(dtype))
 
+                # Mask: pixel-fold + 2x2 pack → (B, seq, 256)
+                # Mirrors FluxFillPipeline.prepare_mask_latents exactly.
+                mask_packed = pack_mask(
+                    batch["mask_binary"].to(dtype), vae_scale_factor=8
+                ).to(device)
+
                 B = image_latents.shape[0]
 
                 # -- Flow matching noise --
-                # FLUX uses linear flow: x_t = (1-t)*x_0 + t*eps
-                noise     = torch.randn_like(image_latents)
-                # Logit-normal timestep sampling (as used in FLUX training)
-                u = torch.normal(mean=0.0, std=1.0, size=(B,), device=device)
-                t = torch.sigmoid(u)                          # (B,) in (0,1)
-                t_expand  = t.view(B, 1, 1)
+                noise    = torch.randn_like(image_latents)
+                u        = torch.normal(mean=0.0, std=1.0, size=(B,), device=device)
+                t        = torch.sigmoid(u)              # logit-normal in (0,1)
+                t_expand = t.view(B, 1, 1)
                 noisy_latents = (1.0 - t_expand) * image_latents + t_expand * noise
 
-                # FLUX.1-Fill transformer expects noisy + masked_image concatenated.
-                # The mask is already encoded in masked_image_latents (hand region = 0).
+                # FLUX.1-Fill hidden_states = cat([noisy, masked_image, mask])
+                #   noisy:        (B, seq, 64)
+                #   masked_image: (B, seq, 64)
+                #   mask:         (B, seq, 256)  ← pixel-folded, NOT VAE-encoded
+                #   total:        (B, seq, 384)  ← matches transformer in_channels=384
                 noisy_model_input = torch.cat(
-                    [noisy_latents, masked_image_latents], dim=-1
-                )  # (B, seq, 128) — Fill's in_channels=128
+                    [noisy_latents, masked_image_latents, mask_packed], dim=-1
+                )
 
                 # -- Broadcast text embeddings to batch --
                 pe  = prompt_embeds.expand(B, -1, -1).to(device)
