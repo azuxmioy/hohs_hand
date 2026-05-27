@@ -121,14 +121,13 @@ def unpack_latents(latents: torch.Tensor, height: int, width: int) -> torch.Tens
     return latents
 
 
-def prepare_image_ids(height: int, width: int, batch_size: int, device) -> torch.Tensor:
-    """Positional IDs for FLUX's RoPE encoding."""
+def prepare_image_ids(height: int, width: int, device) -> torch.Tensor:
+    """Positional IDs for FLUX's RoPE encoding. Returns (seq, 3) — no batch dim."""
     h, w = height // 16, width // 16  # after 8x VAE + 2x patch packing
     ids = torch.zeros(h, w, 3, device=device)
     ids[..., 1] = ids[..., 1] + torch.arange(h, device=device)[:, None]
     ids[..., 2] = ids[..., 2] + torch.arange(w, device=device)[None, :]
-    ids = ids.reshape(1, h * w, 3).expand(batch_size, -1, -1)
-    return ids
+    return ids.reshape(h * w, 3)
 
 
 def get_sigmas(timesteps: torch.Tensor) -> torch.Tensor:
@@ -220,7 +219,7 @@ def train(cfg):
     )
 
     H = W = cfg.training.image_size
-    img_ids = prepare_image_ids(H, W, cfg.training.batch_size, device)
+    img_ids = prepare_image_ids(H, W, device)  # (seq, 3) — no batch dim
 
     global_step = 0
     for epoch in range(cfg.training.num_train_epochs):
@@ -276,8 +275,8 @@ def train(cfg):
                     guidance=torch.full((B,), 3.5, device=device, dtype=dtype),
                     encoder_hidden_states=pe,
                     pooled_projections=ppe,
-                    img_ids=img_ids[:B],
-                    txt_ids=torch.zeros(B, pe.shape[1], 3, device=device, dtype=dtype),
+                    img_ids=img_ids,
+                    txt_ids=torch.zeros(pe.shape[1], 3, device=device, dtype=dtype),
                     return_dict=False,
                 )
 
@@ -288,8 +287,8 @@ def train(cfg):
                     guidance=torch.full((B,), 3.5, device=device, dtype=dtype),
                     encoder_hidden_states=pe,
                     pooled_projections=ppe,
-                    img_ids=img_ids[:B],
-                    txt_ids=torch.zeros(B, pe.shape[1], 3, device=device, dtype=dtype),
+                    img_ids=img_ids,
+                    txt_ids=torch.zeros(pe.shape[1], 3, device=device, dtype=dtype),
                     controlnet_block_samples=controlnet_block_samples,
                     controlnet_single_block_samples=controlnet_single_block_samples,
                     return_dict=False,
