@@ -32,7 +32,7 @@ from diffusers import (
 )
 from omegaconf import OmegaConf
 from tqdm.auto import tqdm
-from transformers import BitsAndBytesConfig
+from transformers import BitsAndBytesConfig, get_cosine_schedule_with_warmup
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from data.hand_dataset import make_dataloaders
@@ -319,7 +319,11 @@ def train(cfg):
     total_steps = cfg.training.num_train_epochs * math.ceil(
         len(train_loader) / cfg.training.gradient_accumulation_steps
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps)
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=cfg.training.lr_warmup_steps,
+        num_training_steps=total_steps,
+    )
 
     # -- Accelerate prepare --
     controlnet, optimizer, train_loader, val_loader, scheduler = accelerator.prepare(
@@ -409,15 +413,18 @@ def train(cfg):
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(controlnet.parameters(), cfg.training.max_grad_norm)
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
+                    global_step += 1
 
-            global_step += 1
+                    if global_step % cfg.training.log_every == 0 and accelerator.is_main_process:
+                        accelerator.log(
+                            {"train/loss": loss.item(), "train/lr": scheduler.get_last_lr()[0]},
+                            step=global_step,
+                        )
+
             pbar.set_postfix(loss=f"{loss.item():.4f}")
-
-            if global_step % cfg.training.log_every == 0 and accelerator.is_main_process:
-                accelerator.log({"train/loss": loss.item(), "train/lr": scheduler.get_last_lr()[0]}, step=global_step)
 
         # -- Checkpoint --
         if (epoch + 1) % cfg.training.save_every == 0 and accelerator.is_main_process:
