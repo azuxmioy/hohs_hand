@@ -35,6 +35,9 @@ def main():
     parser.add_argument("--num_samples", type=int, default=4)
     parser.add_argument("--resolution", type=int, default=512,
                         help="Run inpainting at this resolution. FLUX is trained at 1024.")
+    parser.add_argument("--rope_interp", action="store_true",
+                        help="Scale RoPE image_ids by (1024/resolution) so the model "
+                             "sees the same positional range it was trained on.")
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -60,6 +63,22 @@ def main():
         torch_dtype=dtype,
     )
     pipe.to(device)
+
+    if args.rope_interp:
+        # Monkey-patch _prepare_latent_image_ids to scale by 1024/resolution.
+        # This puts the position IDs in the same numeric range the model saw
+        # during 1024×1024 training even when we run at lower resolution.
+        scale = 1024.0 / args.resolution
+
+        @staticmethod
+        def _prepare_latent_image_ids_scaled(batch_size, height, width, device, dtype):
+            ids = torch.zeros(height, width, 3)
+            ids[..., 1] = torch.arange(height)[:, None] * scale
+            ids[..., 2] = torch.arange(width)[None, :] * scale
+            return ids.reshape(height * width, 3).to(device=device, dtype=dtype)
+
+        FluxFillPipeline._prepare_latent_image_ids = _prepare_latent_image_ids_scaled
+        print(f"RoPE position interpolation enabled (scale={scale:.2f})")
 
     # Save panels for each sample: [original | masked | inpainted]
     R = args.resolution
@@ -90,7 +109,8 @@ def main():
             panel.paste(image_pil, (0, 0))
             panel.paste(masked_pil, (R, 0))
             panel.paste(result, (R * 2, 0))
-            out_path = os.path.join(args.out_dir, f"sample_{idx:04d}_r{R}.png")
+            suffix = f"_r{R}" + ("_ropeinterp" if args.rope_interp else "")
+            out_path = os.path.join(args.out_dir, f"sample_{idx:04d}{suffix}.png")
             panel.save(out_path)
             print(f"Saved {out_path}")
 
