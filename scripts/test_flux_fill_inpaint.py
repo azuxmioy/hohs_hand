@@ -33,6 +33,8 @@ def main():
     parser.add_argument("--num_steps", type=int, default=30)
     parser.add_argument("--guidance_scale", type=float, default=30.0)
     parser.add_argument("--num_samples", type=int, default=4)
+    parser.add_argument("--resolution", type=int, default=512,
+                        help="Run inpainting at this resolution. FLUX is trained at 1024.")
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -60,33 +62,35 @@ def main():
     pipe.to(device)
 
     # Save panels for each sample: [original | masked | inpainted]
+    R = args.resolution
     with h5py.File(args.hdf5_path, "r") as f:
         for i in range(args.num_samples):
             idx = args.sample_idx + i
             crop = f["crops"][idx]              # (256,256,3) uint8
             mask = (f["masks"][idx] > 0).astype(np.uint8) * 255  # binary 0/255
 
-            image_pil = Image.fromarray(crop)
-            mask_pil = Image.fromarray(mask)
-            masked_pil = Image.fromarray(crop * (mask[..., None] == 0))
+            image_pil = Image.fromarray(crop).resize((R, R), Image.BILINEAR)
+            mask_pil = Image.fromarray(mask).resize((R, R), Image.NEAREST)
+            mask_arr = np.array(mask_pil)
+            masked_pil = Image.fromarray(np.array(image_pil) * (mask_arr[..., None] == 0))
 
             generator = torch.Generator(device=device).manual_seed(42)
             result = pipe(
                 prompt=args.prompt,
                 image=image_pil,
                 mask_image=mask_pil,
-                height=256,
-                width=256,
+                height=R,
+                width=R,
                 num_inference_steps=args.num_steps,
                 guidance_scale=args.guidance_scale,
                 generator=generator,
             ).images[0]
 
-            panel = Image.new("RGB", (256 * 3, 256))
+            panel = Image.new("RGB", (R * 3, R))
             panel.paste(image_pil, (0, 0))
-            panel.paste(masked_pil, (256, 0))
-            panel.paste(result, (512, 0))
-            out_path = os.path.join(args.out_dir, f"sample_{idx:04d}.png")
+            panel.paste(masked_pil, (R, 0))
+            panel.paste(result, (R * 2, 0))
+            out_path = os.path.join(args.out_dir, f"sample_{idx:04d}_r{R}.png")
             panel.save(out_path)
             print(f"Saved {out_path}")
 
