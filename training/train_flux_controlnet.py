@@ -339,6 +339,32 @@ def train(cfg):
     img_ids = prepare_image_ids(H, W, device)  # (seq, 3) — no batch dim
 
     global_step = 0
+
+    # -- Smoke-test inference at step 0 (validates pipeline before training) --
+    if accelerator.is_main_process:
+        logger.info("Running smoke-test inference at step 0 …")
+        results = run_inference(
+            transformer=transformer,
+            vae=vae,
+            controlnet=accelerator.unwrap_model(controlnet),
+            val_loader=val_loader,
+            prompt_embeds=prompt_embeds,
+            pooled_prompt_embeds=pooled_prompt_embeds,
+            device=device,
+            dtype=dtype,
+            image_size=cfg.training.image_size,
+            num_steps=cfg.training.num_inference_steps,
+            num_samples=cfg.training.num_eval_samples,
+        )
+        if results:
+            grid_np = make_image_grid(results)
+            wandb.log(
+                {"val/samples": [wandb.Image(grid_np[i]) for i in range(len(grid_np))]},
+                step=0,
+            )
+        controlnet.train()
+    accelerator.wait_for_everyone()
+
     for epoch in range(cfg.training.num_train_epochs):
         controlnet.train()
         pbar = tqdm(train_loader, disable=not accelerator.is_main_process, desc=f"Epoch {epoch}")
