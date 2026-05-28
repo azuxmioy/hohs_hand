@@ -62,8 +62,12 @@ fi
 
 # Step 2: train
 echo "==> Starting training with $NUM_GPUS GPU(s) …"
-PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-export PYTORCH_CUDA_ALLOC_CONF
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# 30-minute NCCL watchdog so rank 0 can run eval/checkpoint without other
+# ranks timing out on the next gradient sync.
+export TORCH_NCCL_BLOCKING_WAIT=0
+export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=1800
 
 if [ "$NUM_GPUS" -eq 1 ]; then
     CUDA_VISIBLE_DEVICES="$CUDA_VISIBLE" accelerate launch \

@@ -18,13 +18,14 @@ import logging
 import math
 import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 import torch
 import torch.nn.functional as F
 import wandb
 from accelerate import Accelerator
-from accelerate.utils import set_seed, ProjectConfiguration
+from accelerate.utils import set_seed, ProjectConfiguration, InitProcessGroupKwargs
 from diffusers import (
     AutoencoderKL,
     FluxControlNetModel,
@@ -247,11 +248,15 @@ def make_image_grid(results):
 
 def train(cfg):
     proj_cfg = ProjectConfiguration(project_dir=cfg.output.dir, logging_dir=cfg.output.dir)
+    # 30-minute NCCL collective timeout so rank-0 eval/checkpoint can complete
+    # without ranks 1..N timing out at the next gradient sync.
+    pg_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
     accelerator = Accelerator(
         gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
         mixed_precision=cfg.training.mixed_precision,
         log_with="wandb",
         project_config=proj_cfg,
+        kwargs_handlers=[pg_kwargs],
     )
     set_seed(42)
 
@@ -423,34 +428,40 @@ def train(cfg):
                         )
 
                     # -- Checkpoint (iteration-based) --
-                    if global_step % cfg.training.save_every_iters == 0 and accelerator.is_main_process:
-                        ckpt_dir = f"{cfg.output.checkpoints}/step_{global_step:06d}"
-                        accelerator.unwrap_model(controlnet).save_pretrained(ckpt_dir)
-                        logger.info(f"Saved ControlNet → {ckpt_dir}")
+                    # All ranks must enter this barrier together; otherwise the
+                    # next training collective will time out waiting for rank 0.
+                    if global_step % cfg.training.save_every_iters == 0:
+                        if accelerator.is_main_process:
+                            ckpt_dir = f"{cfg.output.checkpoints}/step_{global_step:06d}"
+                            accelerator.unwrap_model(controlnet).save_pretrained(ckpt_dir)
+                            logger.info(f"Saved ControlNet → {ckpt_dir}")
+                        accelerator.wait_for_everyone()
 
                     # -- Eval (iteration-based) --
-                    if global_step % cfg.training.eval_every_iters == 0 and accelerator.is_main_process:
-                        logger.info(f"Running inference at step {global_step} …")
-                        results = run_inference(
-                            transformer=transformer,
-                            vae=vae,
-                            controlnet=accelerator.unwrap_model(controlnet),
-                            val_loader=val_loader,
-                            prompt_embeds=prompt_embeds,
-                            pooled_prompt_embeds=pooled_prompt_embeds,
-                            device=device,
-                            dtype=dtype,
-                            image_size=cfg.training.image_size,
-                            num_steps=cfg.training.num_inference_steps,
-                            num_samples=cfg.training.num_eval_samples,
-                        )
-                        if results:
-                            grid_np = make_image_grid(results)
-                            wandb.log(
-                                {"val/samples": [wandb.Image(grid_np[i]) for i in range(len(grid_np))]},
-                                step=global_step,
+                    if global_step % cfg.training.eval_every_iters == 0:
+                        if accelerator.is_main_process:
+                            logger.info(f"Running inference at step {global_step} …")
+                            results = run_inference(
+                                transformer=transformer,
+                                vae=vae,
+                                controlnet=accelerator.unwrap_model(controlnet),
+                                val_loader=val_loader,
+                                prompt_embeds=prompt_embeds,
+                                pooled_prompt_embeds=pooled_prompt_embeds,
+                                device=device,
+                                dtype=dtype,
+                                image_size=cfg.training.image_size,
+                                num_steps=cfg.training.num_inference_steps,
+                                num_samples=cfg.training.num_eval_samples,
                             )
-                        controlnet.train()
+                            if results:
+                                grid_np = make_image_grid(results)
+                                wandb.log(
+                                    {"val/samples": [wandb.Image(grid_np[i]) for i in range(len(grid_np))]},
+                                    step=global_step,
+                                )
+                            controlnet.train()
+                        accelerator.wait_for_everyone()
 
             pbar.set_postfix(loss=f"{loss.item():.4f}")
 
