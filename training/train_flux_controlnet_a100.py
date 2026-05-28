@@ -144,30 +144,33 @@ def run_inference(
                 [latents, masked_image_latents, mask_packed], dim=-1
             )
 
-            cn_block, cn_single = controlnet(
-                hidden_states=latents,
-                controlnet_cond=condition_latents,
-                conditioning_scale=1.0,
-                timestep=t_batch,
-                guidance=guidance,
-                encoder_hidden_states=pe,
-                pooled_projections=ppe,
-                img_ids=img_ids,
-                txt_ids=txt_ids,
-                return_dict=False,
-            )
-            v_pred = transformer(
-                hidden_states=noisy_model_input,
-                timestep=t_batch,
-                guidance=guidance,
-                encoder_hidden_states=pe,
-                pooled_projections=ppe,
-                img_ids=img_ids,
-                txt_ids=txt_ids,
-                controlnet_block_samples=cn_block,
-                controlnet_single_block_samples=cn_single,
-                return_dict=False,
-            )[0]
+            # bf16 autocast: A100's plain bf16 transformer needs matching
+            # input dtypes (NF4 silently auto-promoted; bf16 nn.Linear does not).
+            with torch.amp.autocast(device_type="cuda", dtype=dtype):
+                cn_block, cn_single = controlnet(
+                    hidden_states=latents,
+                    controlnet_cond=condition_latents,
+                    conditioning_scale=1.0,
+                    timestep=t_batch,
+                    guidance=guidance,
+                    encoder_hidden_states=pe,
+                    pooled_projections=ppe,
+                    img_ids=img_ids,
+                    txt_ids=txt_ids,
+                    return_dict=False,
+                )
+                v_pred = transformer(
+                    hidden_states=noisy_model_input,
+                    timestep=t_batch,
+                    guidance=guidance,
+                    encoder_hidden_states=pe,
+                    pooled_projections=ppe,
+                    img_ids=img_ids,
+                    txt_ids=txt_ids,
+                    controlnet_block_samples=cn_block,
+                    controlnet_single_block_samples=cn_single,
+                    return_dict=False,
+                )[0]
 
             latents = latents - (1.0 / num_steps) * v_pred
 
@@ -330,31 +333,35 @@ def train(cfg):
                 pe  = prompt_embeds.expand(B, -1, -1).to(device)
                 ppe = pooled_prompt_embeds.expand(B, -1).to(device)
 
-                controlnet_block_samples, controlnet_single_block_samples = controlnet(
-                    hidden_states=noisy_latents,
-                    controlnet_cond=condition_latents,
-                    conditioning_scale=cfg.training.controlnet_conditioning_scale,
-                    timestep=t,
-                    guidance=torch.full((B,), 30.0, device=device, dtype=dtype),
-                    encoder_hidden_states=pe,
-                    pooled_projections=ppe,
-                    img_ids=img_ids,
-                    txt_ids=torch.zeros(pe.shape[1], 3, device=device, dtype=dtype),
-                    return_dict=False,
-                )
+                # bf16 autocast: matches what NF4 did implicitly on the
+                # 24 GB path. Required because plain bf16 nn.Linear errors
+                # on any float32 input.
+                with torch.amp.autocast(device_type="cuda", dtype=dtype):
+                    controlnet_block_samples, controlnet_single_block_samples = controlnet(
+                        hidden_states=noisy_latents,
+                        controlnet_cond=condition_latents,
+                        conditioning_scale=cfg.training.controlnet_conditioning_scale,
+                        timestep=t,
+                        guidance=torch.full((B,), 30.0, device=device, dtype=dtype),
+                        encoder_hidden_states=pe,
+                        pooled_projections=ppe,
+                        img_ids=img_ids,
+                        txt_ids=torch.zeros(pe.shape[1], 3, device=device, dtype=dtype),
+                        return_dict=False,
+                    )
 
-                noise_pred = transformer(
-                    hidden_states=noisy_model_input,
-                    timestep=t,
-                    guidance=torch.full((B,), 30.0, device=device, dtype=dtype),
-                    encoder_hidden_states=pe,
-                    pooled_projections=ppe,
-                    img_ids=img_ids,
-                    txt_ids=torch.zeros(pe.shape[1], 3, device=device, dtype=dtype),
-                    controlnet_block_samples=controlnet_block_samples,
-                    controlnet_single_block_samples=controlnet_single_block_samples,
-                    return_dict=False,
-                )[0]
+                    noise_pred = transformer(
+                        hidden_states=noisy_model_input,
+                        timestep=t,
+                        guidance=torch.full((B,), 30.0, device=device, dtype=dtype),
+                        encoder_hidden_states=pe,
+                        pooled_projections=ppe,
+                        img_ids=img_ids,
+                        txt_ids=torch.zeros(pe.shape[1], 3, device=device, dtype=dtype),
+                        controlnet_block_samples=controlnet_block_samples,
+                        controlnet_single_block_samples=controlnet_single_block_samples,
+                        return_dict=False,
+                    )[0]
 
                 target = noise - image_latents
                 loss   = F.mse_loss(noise_pred.float(), target.float())
