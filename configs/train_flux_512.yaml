@@ -28,7 +28,7 @@ training:
   controlnet_conditioning_scale: 1.0
 
 data:
-  latent_cache: /data/hohs2/datasets/data_latents_512.h5
+  latent_cache: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/datasets/data_latents_512.h5
   num_workers: 4
   val_split: 0.1
 
@@ -37,6 +37,6 @@ logging:
   run_name: flux_fill_controlnet_512
 
 output:
-  dir: /data/hohs2/outputs/flux_controlnet_512
-  checkpoints: /data/hohs2/checkpoints/flux_controlnet_512
-  embeddings_cache: /data/hohs2/outputs/flux_controlnet/text_embeddings.pt
+  dir: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/outputs/flux_controlnet_512
+  checkpoints: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/checkpoints/flux_controlnet_512
+  embeddings_cache: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/outputs/flux_controlnet/text_embeddings.pt

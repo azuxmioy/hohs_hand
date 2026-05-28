@@ -13,8 +13,8 @@ in parallel with VAE batched encoding (3 × batch images per VAE call).
 
 Usage:
     python scripts/precompute_latents.py \\
-        --src /data/hohs2/datasets/data.h5 \\
-        --dst /data/hohs2/datasets/data_latents_512.h5 \\
+        --src "$DATA_DIR"/datasets/data.h5 \\
+        --dst "$DATA_DIR"/datasets/data_latents_512.h5 \\
         --resolution 512 --batch_size 8 --num_workers 4
 """
 import argparse
@@ -87,9 +87,10 @@ class PrecomputeSource(Dataset):
 
 
 def main():
+    data_dir = os.environ.get("DATA_DIR", f"/data/{os.environ.get('USER', '')}")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--src", default="/data/hohs2/datasets/data.h5")
-    parser.add_argument("--dst", default="/data/hohs2/datasets/data_latents_512.h5")
+    parser.add_argument("--src", default=f"{data_dir}/datasets/data.h5")
+    parser.add_argument("--dst", default=f"{data_dir}/datasets/data_latents_512.h5")
     parser.add_argument("--resolution", type=int, default=512)
     parser.add_argument("--model_id", default="black-forest-labs/FLUX.1-Fill-dev")
     parser.add_argument("--batch_size", type=int, default=8)

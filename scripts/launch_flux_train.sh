@@ -9,9 +9,9 @@ set -e
 source /etc/profile
 module load cuda/12.2 gcc/13
 
-DATA_DIR="/data/hohs2"
-VENV_DIR="$DATA_DIR/envs/hohs_hand"
-REPO_DIR="$HOME/hohs_hand"
+export DATA_DIR="${DATA_DIR:-/data/${USER}}"
+VENV_DIR="${VENV_DIR:-$DATA_DIR/envs/hohs_hand}"
+REPO_DIR="${REPO_DIR:-$HOME/hohs_hand}"
 CONFIG="configs/train_flux.yaml"
 NUM_GPUS=4
 

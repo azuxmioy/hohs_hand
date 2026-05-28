@@ -5,7 +5,7 @@ ControlNet training.  Run once; saved to disk and loaded by train script.
 Usage:
     python scripts/precompute_flux_embeddings.py \
         --model_id black-forest-labs/FLUX.1-Fill-dev \
-        --out /data/hohs2/outputs/flux_controlnet/text_embeddings.pt
+        --out "$DATA_DIR"/outputs/flux_controlnet/text_embeddings.pt
 """
 
 import argparse
@@ -62,5 +62,9 @@ def encode(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_id", default="black-forest-labs/FLUX.1-Fill-dev")
-    parser.add_argument("--out", default="/data/hohs2/outputs/flux_controlnet/text_embeddings.pt")
+    default_out = os.path.expandvars(
+        os.environ.get("DATA_DIR", f"/data/{os.environ.get('USER', '')}")
+        + "/outputs/flux_controlnet/text_embeddings.pt"
+    )
+    parser.add_argument("--out", default=default_out)
     encode(parser.parse_args())

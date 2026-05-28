@@ -31,7 +31,7 @@ training:
   controlnet_conditioning_scale: 1.0
 
 data:
-  hdf5_path: /data/hohs2/datasets/data.h5
+  hdf5_path: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/datasets/data.h5
   num_workers: 4
   val_split: 0.1
   # Composite condition: skeleton overlaid on UV map
@@ -42,6 +42,6 @@ logging:
   run_name: flux_fill_controlnet
 
 output:
-  dir: /data/hohs2/outputs/flux_controlnet
-  checkpoints: /data/hohs2/checkpoints/flux_controlnet
-  embeddings_cache: /data/hohs2/outputs/flux_controlnet/text_embeddings.pt
+  dir: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/outputs/flux_controlnet
+  checkpoints: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/checkpoints/flux_controlnet
+  embeddings_cache: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/outputs/flux_controlnet/text_embeddings.pt

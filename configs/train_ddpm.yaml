@@ -41,5 +41,5 @@ logging:
   run_name: ddpm_baseline
 
 output:
-  dir: /data/hohs2/outputs/hohs_hand
-  checkpoints: /data/hohs2/checkpoints/hohs_hand
+  dir: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/outputs/hohs_hand
+  checkpoints: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/checkpoints/hohs_hand

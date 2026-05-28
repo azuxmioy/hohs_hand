@@ -22,13 +22,14 @@ from transformers import BitsAndBytesConfig
 
 
 def main():
+    data_dir = os.environ.get("DATA_DIR", f"/data/{os.environ.get('USER', '')}")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--hdf5_path", default="/data/hohs2/datasets/data.h5")
+    parser.add_argument("--hdf5_path", default=f"{data_dir}/datasets/data.h5")
     parser.add_argument("--sample_idx", type=int, default=0)
     parser.add_argument("--prompt", default="a human hand")
     parser.add_argument(
         "--out_dir",
-        default="/data/hohs2/outputs/flux_controlnet/text_guided_test",
+        default=f"{data_dir}/outputs/flux_controlnet/text_guided_test",
     )
     parser.add_argument("--num_steps", type=int, default=30)
     parser.add_argument("--guidance_scale", type=float, default=30.0)
