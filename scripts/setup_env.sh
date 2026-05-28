@@ -14,7 +14,9 @@ echo "==> CUDA: $(nvcc --version | grep release)"
 echo "==> Python: $(python3 --version)"
 
 echo "==> Creating virtual environment at $VENV_DIR"
-~/.local/bin/virtualenv -p python3 "$VENV_DIR"
+# Prefer system virtualenv; fall back to ~/.local/bin/ (pip --user install).
+VIRTUALENV_BIN="$(command -v virtualenv || echo "$HOME/.local/bin/virtualenv")"
+"$VIRTUALENV_BIN" -p python3 "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 
 echo "==> Upgrading pip"
