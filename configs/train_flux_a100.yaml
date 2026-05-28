@@ -12,8 +12,8 @@ model:
 
 training:
   image_size: 512
-  batch_size: 2                       # A100 has the memory; larger micro-batch
-  gradient_accumulation_steps: 2      # effective batch = 4
+  batch_size: 4                       # A100 has the memory; larger micro-batch
+  gradient_accumulation_steps: 2      # effective batch = 8
   num_train_epochs: 200
   lr: 2.0e-4
   lr_warmup_steps: 100
