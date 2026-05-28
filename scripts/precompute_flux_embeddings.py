@@ -1,10 +1,11 @@
 """
-Pre-compute T5 + CLIP text embeddings for the empty prompt used during
-ControlNet training.  Run once; saved to disk and loaded by train script.
+Pre-compute T5 + CLIP text embeddings used during ControlNet training.
+Run once; saved to disk and loaded by the training script.
 
 Usage:
     python scripts/precompute_flux_embeddings.py \
         --model_id black-forest-labs/FLUX.1-Fill-dev \
+        --prompt "a hand wearing a glove" \
         --out "$DATA_DIR"/outputs/flux_controlnet/text_embeddings.pt
 """
 
@@ -13,12 +14,11 @@ import os
 import torch
 from transformers import T5EncoderModel, CLIPTextModel, CLIPTokenizer, T5Tokenizer
 
-PROMPT = ""   # empty prompt — ControlNet handles the conditioning
-
 
 def encode(args):
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Prompt: {args.prompt!r}")
 
     print("Loading T5 tokenizer + encoder …")
     t5_tok = T5Tokenizer.from_pretrained(args.model_id, subfolder="tokenizer_2")
@@ -35,23 +35,22 @@ def encode(args):
     ).to(device)
 
     with torch.no_grad():
-        # T5 embedding  (1, seq_len, 4096)
         t5_ids = t5_tok(
-            [PROMPT], padding="max_length", max_length=512,
+            [args.prompt], padding="max_length", max_length=512,
             truncation=True, return_tensors="pt"
         ).input_ids.to(device)
         t5_emb = t5_enc(t5_ids).last_hidden_state   # (1, 512, 4096)
 
-        # CLIP pooled embedding  (1, 768)
         clip_ids = clip_tok(
-            [PROMPT], padding="max_length", max_length=77,
+            [args.prompt], padding="max_length", max_length=77,
             truncation=True, return_tensors="pt"
         ).input_ids.to(device)
         clip_emb = clip_enc(clip_ids).pooler_output  # (1, 768)
 
     result = {
-        "prompt_embeds":        t5_emb.cpu(),    # (1, 512, 4096) bfloat16
-        "pooled_prompt_embeds": clip_emb.cpu(),  # (1, 768)       bfloat16
+        "prompt_embeds":        t5_emb.cpu(),
+        "pooled_prompt_embeds": clip_emb.cpu(),
+        "prompt":               args.prompt,
     }
     torch.save(result, args.out)
     print(f"Saved embeddings → {args.out}")
@@ -62,6 +61,8 @@ def encode(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_id", default="black-forest-labs/FLUX.1-Fill-dev")
+    parser.add_argument("--prompt", default="",
+                        help="Text prompt to encode. Empty string lets ControlNet do all conditioning.")
     default_out = os.path.expandvars(
         os.environ.get("DATA_DIR", f"/data/{os.environ.get('USER', '')}")
         + "/outputs/flux_controlnet/text_embeddings.pt"
