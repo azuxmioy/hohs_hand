@@ -15,13 +15,13 @@ training:
   batch_size: 1
   gradient_accumulation_steps: 4
   num_train_epochs: 200
-  lr: 1.0e-4
+  lr: 2.0e-4
   lr_warmup_steps: 100
   mixed_precision: bf16
   gradient_checkpointing: true
-  save_every_iters: 1000
+  save_every_iters: 200
   log_every: 10
-  eval_every_iters: 500
+  eval_every_iters: 100
   num_eval_samples: 4
   num_inference_steps: 30
   max_grad_norm: 1.0
@@ -29,7 +29,7 @@ training:
 
 data:
   latent_cache: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/datasets/data_latents_512.h5
-  num_workers: 4
+  num_workers: 2
   val_split: 0.1
 
 logging:

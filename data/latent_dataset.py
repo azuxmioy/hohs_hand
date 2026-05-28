@@ -75,7 +75,7 @@ class LatentHandDataset(Dataset):
 
 
 def make_latent_dataloaders(
-    h5_path, batch_size=1, val_split=0.1, num_workers=4, seed=42
+    h5_path, batch_size=1, val_split=0.1, num_workers=2, seed=42
 ):
     rng = np.random.default_rng(seed)
     with h5py.File(h5_path, "r") as f:
@@ -87,12 +87,16 @@ def make_latent_dataloaders(
     train_ds = LatentHandDataset(h5_path, augment=True,  indices=train_idx)
     val_ds   = LatentHandDataset(h5_path, augment=False, indices=val_idx)
 
+    # timeout: raise after 5 min of no batch (h5py+multiprocessing can hang
+    # silently otherwise, causing NCCL collective timeouts on other ranks).
+    # persistent_workers: keep h5 file handles alive across batches.
+    extra = {"timeout": 300, "persistent_workers": True} if num_workers > 0 else {}
     train_loader = DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=num_workers, pin_memory=True, drop_last=True,
+        num_workers=num_workers, pin_memory=True, drop_last=True, **extra,
     )
     val_loader = DataLoader(
         val_ds, batch_size=batch_size, shuffle=False,
-        num_workers=num_workers, pin_memory=True,
+        num_workers=num_workers, pin_memory=True, **extra,
     )
     return train_loader, val_loader
