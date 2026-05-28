@@ -13,7 +13,6 @@ export DATA_DIR="${DATA_DIR:-/data/${USER}}"
 VENV_DIR="${VENV_DIR:-$DATA_DIR/envs/hohs_hand}"
 REPO_DIR="${REPO_DIR:-$HOME/hohs_hand}"
 CONFIG="configs/train_flux_a100.yaml"
-RESOLUTION=512
 PROMPT="${PROMPT:-a hand wearing a black glove}"
 
 # Allow overriding the config path
@@ -47,16 +46,9 @@ if [ ! -f "$EMBED_CACHE" ]; then
             --prompt "$PROMPT" --out "$EMBED_CACHE"
 fi
 
-# Step 2: latent cache.
-LATENT_CACHE="$DATA_DIR/datasets/data_latents_${RESOLUTION}.h5"
-if [ ! -f "$LATENT_CACHE" ]; then
-    echo "==> Pre-computing VAE latents at ${RESOLUTION}×${RESOLUTION} …"
-    CUDA_VISIBLE_DEVICES="$FREE_GPU" \
-        python scripts/precompute_latents.py \
-            --src "$DATA_DIR/datasets/data.h5" \
-            --dst "$LATENT_CACHE" \
-            --resolution "$RESOLUTION"
-fi
+# No latent cache: A100 has plenty of memory, so we VAE-encode in the
+# training loop. This preserves the full augmentation pipeline
+# (RandomResizedCrop + ColorJitter + rot90) on raw images.
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 

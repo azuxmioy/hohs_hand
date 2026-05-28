@@ -6,8 +6,8 @@ Differences from train_flux_controlnet_latent.py:
   - Gradient checkpointing OFF (faster forward/backward)
   - Single-GPU only — no DDP, no NCCL barriers
   - Larger micro-batch (batch_size > 1 OK because activation memory fits)
-
-Pre-requisite: run scripts/precompute_latents.py to build the latent cache.
+  - Uses raw HDF5 dataset and VAE-encodes on the fly so we get the full
+    augmentation pipeline (RandomResizedCrop + ColorJitter + rot90).
 
 Usage:
     python training/train_flux_controlnet_a100.py --config configs/train_flux_a100.yaml
@@ -32,7 +32,7 @@ from tqdm.auto import tqdm
 from transformers import get_cosine_schedule_with_warmup
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from data.latent_dataset import make_latent_dataloaders
+from data.hand_dataset import make_dataloaders
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,14 @@ def load_frozen_components(model_id: str, dtype: torch.dtype, device: str):
     transformer.requires_grad_(False)
     # Gradient checkpointing intentionally OFF — A100 has the memory.
     return vae, transformer
+
+
+def encode_images(vae, images: torch.Tensor) -> torch.Tensor:
+    """Encode (B,3,H,W) in [-1,1] → packed latents (B, H/16*W/16, 64)."""
+    with torch.no_grad():
+        latents = vae.encode(images).latent_dist.mode()
+        latents = (latents - vae.config.shift_factor) * vae.config.scaling_factor
+    return pack_latents(latents)
 
 
 def pack_latents(latents: torch.Tensor) -> torch.Tensor:
@@ -119,8 +127,8 @@ def run_inference(
         condition    = batch["condition"][:B].to(device, dtype=dtype)
         mask_binary  = batch["mask_binary"][:B].to(device, dtype=dtype)
 
-        masked_image_latents = pack_latents(batch["masked_lat"][:B].to(device, dtype=dtype))
-        condition_latents    = pack_latents(batch["condition_lat"][:B].to(device, dtype=dtype))
+        masked_image_latents = encode_images(vae, masked_image)
+        condition_latents    = encode_images(vae, condition)
         mask_packed          = pack_mask(mask_binary, vae_scale_factor=8)
 
         seq_len = (image_size // 16) ** 2
@@ -215,11 +223,8 @@ def train(cfg):
     dtype = torch.bfloat16 if cfg.training.mixed_precision == "bf16" else torch.float32
     device = accelerator.device
 
-    if not os.path.exists(cfg.data.latent_cache):
-        raise FileNotFoundError(
-            f"Latent cache not found at {cfg.data.latent_cache}. "
-            "Run scripts/precompute_latents.py first."
-        )
+    if not os.path.exists(cfg.data.hdf5_path):
+        raise FileNotFoundError(f"Dataset not found at {cfg.data.hdf5_path}.")
 
     logger.info("Loading frozen FLUX.1-Fill components (bf16, no NF4) …")
     vae, transformer = load_frozen_components(cfg.model.base_model, dtype, device)
@@ -248,8 +253,9 @@ def train(cfg):
     prompt_embeds        = emb_cache["prompt_embeds"].to(dtype=dtype)
     pooled_prompt_embeds = emb_cache["pooled_prompt_embeds"].to(dtype=dtype)
 
-    train_loader, val_loader = make_latent_dataloaders(
-        cfg.data.latent_cache,
+    train_loader, val_loader = make_dataloaders(
+        cfg.data.hdf5_path,
+        image_size=cfg.training.image_size,
         batch_size=cfg.training.batch_size,
         val_split=cfg.data.val_split,
         num_workers=cfg.data.num_workers,
@@ -304,10 +310,10 @@ def train(cfg):
         for batch in pbar:
             with accelerator.accumulate(controlnet):
 
-                image_latents        = pack_latents(batch["image_lat"].to(dtype))
-                masked_image_latents = pack_latents(batch["masked_lat"].to(dtype))
-                condition_latents    = pack_latents(batch["condition_lat"].to(dtype))
-                mask_packed          = pack_mask(batch["mask_binary"].to(dtype), vae_scale_factor=8)
+                image_latents        = encode_images(vae, batch["image"].to(device, dtype=dtype))
+                masked_image_latents = encode_images(vae, batch["masked_image"].to(device, dtype=dtype))
+                condition_latents    = encode_images(vae, batch["condition"].to(device, dtype=dtype))
+                mask_packed          = pack_mask(batch["mask_binary"].to(device, dtype=dtype), vae_scale_factor=8)
 
                 B = image_latents.shape[0]
 

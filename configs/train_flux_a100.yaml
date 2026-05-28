@@ -28,7 +28,7 @@ training:
   controlnet_conditioning_scale: 1.0
 
 data:
-  latent_cache: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/datasets/data_latents_512.h5
+  hdf5_path: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/datasets/data.h5
   num_workers: 2
   val_split: 0.1
 
