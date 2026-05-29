@@ -48,6 +48,12 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 # triggers ENOMEM on fork / mmap when other users have heavy jobs.
 export MALLOC_ARENA_MAX=2
 
+RESUME_ARGS=()
+if [ -n "$RESUME_FROM" ]; then
+    echo "==> Resuming weights from: $RESUME_FROM"
+    RESUME_ARGS=(--resume_from "$RESUME_FROM")
+fi
+
 echo "==> Starting LoRA + ControlNet training on GPU $FREE_GPU …"
 CUDA_VISIBLE_DEVICES="$FREE_GPU" \
-    python training/train_flux_controlnet_lora.py --config "$CONFIG"
+    python training/train_flux_controlnet_lora.py --config "$CONFIG" "${RESUME_ARGS[@]}"

@@ -33,7 +33,7 @@ from accelerate.utils import ProjectConfiguration, set_seed
 from diffusers import AutoencoderKL, FluxControlNetModel, FluxTransformer2DModel
 from omegaconf import OmegaConf
 from peft import LoraConfig
-from peft.utils import get_peft_model_state_dict
+from peft.utils import get_peft_model_state_dict, set_peft_model_state_dict
 from tqdm.auto import tqdm
 from transformers import get_cosine_schedule_with_warmup
 
@@ -279,6 +279,25 @@ def train(cfg):
     ).to(dtype=dtype)
     controlnet.train()
 
+    # Optional warm restart: load both ControlNet and LoRA weights from a
+    # previous checkpoint dir produced by this script. We start a new run
+    # (fresh global_step + fresh LR schedule); only the weights are reused.
+    resume_from = getattr(cfg, "resume_from", None)
+    if resume_from:
+        if not os.path.isdir(resume_from):
+            raise FileNotFoundError(f"--resume_from {resume_from} not found")
+        logger.info(f"Resuming weights from {resume_from}")
+        cn_loaded = FluxControlNetModel.from_pretrained(
+            os.path.join(resume_from, "controlnet"), torch_dtype=dtype
+        )
+        controlnet.load_state_dict(cn_loaded.state_dict())
+        del cn_loaded
+        lora_state = torch.load(
+            os.path.join(resume_from, "transformer_lora.pt"), map_location="cpu"
+        )
+        set_peft_model_state_dict(transformer, lora_state)
+        logger.info("ControlNet + LoRA weights loaded")
+
     if not os.path.exists(cfg.output.embeddings_cache):
         raise FileNotFoundError(
             f"Text embeddings not found at {cfg.output.embeddings_cache}. "
@@ -455,8 +474,12 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/train_flux_a100_lora.yaml")
+    parser.add_argument("--resume_from", default=None,
+                        help="Checkpoint dir with controlnet/ and transformer_lora.pt")
     args, overrides = parser.parse_known_args()
     cfg = OmegaConf.load(args.config)
     if overrides:
         cfg = OmegaConf.merge(cfg, OmegaConf.from_dotlist(overrides))
+    if args.resume_from:
+        cfg.resume_from = args.resume_from
     train(cfg)
