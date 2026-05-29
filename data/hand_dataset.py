@@ -3,6 +3,7 @@
 import h5py
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms.functional as TF
 import torchvision.transforms as T
@@ -77,11 +78,16 @@ class HandDataset(Dataset):
         use_stored_skeleton=True,
         augment=True,
         indices=None,
+        mask_dilation_max=15,
     ):
         self.hdf5_path = hdf5_path
         self.image_size = image_size
         self.use_stored_skeleton = use_stored_skeleton
         self.augment = augment
+        # Max radius (in pixels) of random binary mask dilation. The actual
+        # radius for each sample is sampled uniformly from [0, mask_dilation_max].
+        # Set to 0 to disable.
+        self.mask_dilation_max = mask_dilation_max
 
         with h5py.File(hdf5_path, "r") as f:
             self.length = f["crops"].shape[0]
@@ -179,6 +185,18 @@ class HandDataset(Dataset):
         # Inpainting inputs -----------------------------------------------
         # mask_binary: 1 where hand is (region to inpaint), 0 elsewhere
         mask_binary = (mask_t > 0).float()                 # (1, H, W)
+
+        # Random binary-mask dilation (only during augmentation). Grows the
+        # mask region so the model sees varied inpainting hole sizes — the
+        # ground-truth hand region is the same but the masked area is bigger.
+        if self.augment and self.mask_dilation_max > 0:
+            radius = random.randint(0, self.mask_dilation_max)
+            if radius > 0:
+                k = 2 * radius + 1
+                mask_binary = F.max_pool2d(
+                    mask_binary.unsqueeze(0), kernel_size=k, stride=1, padding=radius
+                ).squeeze(0)
+
         masked_image_t = image_t * (1.0 - mask_binary)    # (3, H, W) hand zeroed out
 
         # ControlNet condition: skeleton lines overlaid on UV map.

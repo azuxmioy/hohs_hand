@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import datetime as _datetime
 import logging
 import math
 import os
@@ -208,7 +209,15 @@ def make_image_grid(results):
 # ---------------------------------------------------------------------------
 
 def train(cfg):
-    proj_cfg = ProjectConfiguration(project_dir=cfg.output.dir, logging_dir=cfg.output.dir)
+    # Per-run subdirectory so reruns don't overwrite previous results.
+    run_id = _datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir     = os.path.join(cfg.output.dir, run_id)
+    checkpoint_dir = os.path.join(cfg.output.checkpoints, run_id)
+    run_name       = f"{cfg.logging.run_name}_{run_id}"
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    proj_cfg = ProjectConfiguration(project_dir=output_dir, logging_dir=output_dir)
     pg_kwargs = InitProcessGroupKwargs(timeout=timedelta(seconds=1800))
     accelerator = Accelerator(
         gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
@@ -219,15 +228,15 @@ def train(cfg):
     )
     set_seed(42)
 
-    os.makedirs(cfg.output.checkpoints, exist_ok=True)
-    os.makedirs(cfg.output.dir, exist_ok=True)
-
     if accelerator.is_main_process:
         accelerator.init_trackers(
             project_name=cfg.logging.project,
             config=OmegaConf.to_container(cfg, resolve=True),
-            init_kwargs={"wandb": {"name": cfg.logging.run_name}},
+            init_kwargs={"wandb": {"name": run_name}},
         )
+        logger.info(f"Run ID: {run_id}")
+        logger.info(f"Output dir:     {output_dir}")
+        logger.info(f"Checkpoint dir: {checkpoint_dir}")
 
     dtype = torch.bfloat16 if cfg.training.mixed_precision == "bf16" else torch.float32
     device = accelerator.device
@@ -392,7 +401,7 @@ def train(cfg):
 
                     if global_step % cfg.training.save_every_iters == 0:
                         if accelerator.is_main_process:
-                            ckpt_dir = f"{cfg.output.checkpoints}/step_{global_step:06d}"
+                            ckpt_dir = f"{checkpoint_dir}/step_{global_step:06d}"
                             accelerator.unwrap_model(controlnet).save_pretrained(ckpt_dir)
                             logger.info(f"Saved ControlNet → {ckpt_dir}")
                         accelerator.wait_for_everyone()
