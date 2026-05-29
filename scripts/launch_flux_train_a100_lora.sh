@@ -42,6 +42,11 @@ if [ ! -f "$EMBED_CACHE" ]; then
 fi
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Cap glibc per-thread memory arenas (default ~8 * nproc, each ~64 MB of
+# reserved VM). The shared server uses strict commit accounting
+# (vm.overcommit_memory=2), so the default eats the commit budget and
+# triggers ENOMEM on fork / mmap when other users have heavy jobs.
+export MALLOC_ARENA_MAX=2
 
 echo "==> Starting LoRA + ControlNet training on GPU $FREE_GPU …"
 CUDA_VISIBLE_DEVICES="$FREE_GPU" \

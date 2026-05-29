@@ -51,6 +51,8 @@ fi
 # (RandomResizedCrop + ColorJitter + rot90) on raw images.
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Cap glibc per-thread arenas; see comment in launch_flux_train_a100_lora.sh
+export MALLOC_ARENA_MAX=2
 
 echo "==> Starting training on GPU $FREE_GPU …"
 CUDA_VISIBLE_DEVICES="$FREE_GPU" \
