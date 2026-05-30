@@ -235,8 +235,23 @@ def make_dataloaders(hdf5_path, image_size=256, batch_size=8,
     train_ds = HandDataset(hdf5_path, image_size=image_size, augment=True,  indices=train_idx)
     val_ds   = HandDataset(hdf5_path, image_size=image_size, augment=False, indices=val_idx)
 
+    # Multiprocessing options for robust workers on shared servers:
+    # - timeout=300: surface hung workers as exceptions instead of silent stalls
+    # - persistent_workers=True: keep h5py handles alive across batches
+    # - multiprocessing_context="spawn": workers start fresh instead of
+    #   inheriting the parent's ~200 GB CUDA-reserved VSZ via fork. Eliminates
+    #   the SIGBUS / out-of-shm class of crashes from fork+h5py on contended
+    #   servers, while still loading data in parallel with the GPU.
+    if num_workers > 0:
+        import torch.multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        extra = {"timeout": 300, "persistent_workers": True,
+                 "multiprocessing_context": ctx}
+    else:
+        extra = {}
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              num_workers=num_workers, pin_memory=True, drop_last=True)
+                              num_workers=num_workers, pin_memory=True,
+                              drop_last=True, **extra)
     val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
-                              num_workers=num_workers, pin_memory=True)
+                              num_workers=num_workers, pin_memory=True, **extra)
     return train_loader, val_loader
