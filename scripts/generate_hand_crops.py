@@ -146,18 +146,6 @@ def load_stereo_calib(segment: str):
     return R, t, K_right
 
 
-def load_stereo_calib_npz(extrinsics_npz: Path):
-    """Load T_right_bleft and K_right from a stereo_extrinsics.npz (calb_video layout).
-
-    Returns R (3×3), t (3,), K_right (3×3) — all float32.
-    """
-    e = np.load(extrinsics_npz, allow_pickle=True)
-    T = e["T_right_bleft"].astype(np.float32)
-    R, t = T[:3, :3], T[:3, 3]
-    K_right = e["K_right"].astype(np.float32)
-    return R, t, K_right
-
-
 # ---------------------------------------------------------------------------
 # Geometry helpers
 # ---------------------------------------------------------------------------
@@ -211,57 +199,6 @@ def render_mask(mask_path: Path, y1: int, y2: int, x1: int, x2: int,
         crop = np.full((y2 - y1, x2 - x1), 255, dtype=np.uint8)
     resized = np.array(Image.fromarray(crop).resize((out_size, out_size), Image.NEAREST))
     return (resized > 127).astype(np.uint8) * 255
-
-
-def render_mask_from_mesh(
-    verts_cam: np.ndarray, faces: np.ndarray, K: np.ndarray,
-    x1: int, y1: int, cw: int, ch: int,
-    out_size: int, dilate_px: int = 5,
-) -> np.ndarray:
-    """Rasterize MANO mesh silhouette → (out_size, out_size) uint8 (0 or 255).
-
-    Used when no segmentation mask is available: the projected mesh coverage is
-    the hand mask. Optionally dilated by `dilate_px` to slightly pad the edge.
-    verts_cam: (V, 3) vertices already in camera space."""
-    verts_2d_full = project_to_image(verts_cam, K)
-    verts_2d = (verts_2d_full - np.array([x1, y1], dtype=np.float32)) \
-               * np.array([out_size / cw, out_size / ch], dtype=np.float32)
-
-    cov = np.zeros((out_size, out_size), dtype=bool)
-    for f in faces:
-        p = verts_2d[f]
-        x0, y0 = p[0, 0], p[0, 1]
-        x1f, y1f = p[1, 0], p[1, 1]
-        x2f, y2f = p[2, 0], p[2, 1]
-
-        bx0 = max(0, int(np.floor(min(x0, x1f, x2f))))
-        bx1 = min(out_size - 1, int(np.ceil(max(x0, x1f, x2f))))
-        by0 = max(0, int(np.floor(min(y0, y1f, y2f))))
-        by1 = min(out_size - 1, int(np.ceil(max(y0, y1f, y2f))))
-        if bx1 < bx0 or by1 < by0:
-            continue
-
-        xs = np.arange(bx0, bx1 + 1, dtype=np.float32) + 0.5
-        ys = np.arange(by0, by1 + 1, dtype=np.float32) + 0.5
-        px, py = np.meshgrid(xs, ys)
-        px, py = px.ravel(), py.ravel()
-
-        denom = (y1f - y2f) * (x0 - x2f) + (x2f - x1f) * (y0 - y2f)
-        if abs(denom) < 1e-8:
-            continue
-        w0 = ((y1f - y2f) * (px - x2f) + (x2f - x1f) * (py - y2f)) / denom
-        w1 = ((y2f - y0) * (px - x2f) + (x0 - x2f) * (py - y2f)) / denom
-        w2 = 1.0 - w0 - w1
-        inside = (w0 >= -1e-5) & (w1 >= -1e-5) & (w2 >= -1e-5)
-        if not inside.any():
-            continue
-        cov[py[inside].astype(np.int32), px[inside].astype(np.int32)] = True
-
-    cov = fill_mask_holes(cov)
-    if dilate_px > 0:
-        from scipy.ndimage import binary_dilation
-        cov = binary_dilation(cov, iterations=int(dilate_px))
-    return cov.astype(np.uint8) * 255
 
 
 def render_skeleton(kp2d: np.ndarray, out_size: int) -> np.ndarray:
@@ -423,27 +360,11 @@ def process_segment(
     out_root: Path,
     h5w: "H5Writer | None" = None,
     n_frames: int = None,
-    mano_dir: Path = None,
-    video_path: Path = None,
-    calib=None,
-    mask_mode: str = "file",
-    mask_base: Path = None,
-    dilate_px: int = 5,
-    drop_last_sec: float = 0.0,
 ):
-    """Process one segment/view. If h5w is provided, accumulate into it (no local H5).
-
-    Path overrides (mano_dir / video_path / calib / mask_base) default to the
-    original `results/…` layout. `mask_mode` is "file" (load segmentation PNG) or
-    "mesh" (rasterize the MANO mesh silhouette, dilated by `dilate_px`).
-    `calib` is an optional (R, t, K_right) tuple for the right view.
-    """
-    if mano_dir is None:
-        mano_dir = ROOT / "results" / "stereo_mano_bleft" / segment
-    if mask_base is None:
-        mask_base = ROOT / "tight_masks" / segment / view / "masks"
-    if video_path is None:
-        video_path = ROOT / "videos" / "pinhole" / segment / f"{view}_pinhole_fov100.mp4"
+    """Process one segment/view. If h5w is provided, accumulate into it (no local H5)."""
+    mano_dir   = ROOT / "results" / "stereo_mano_bleft" / segment
+    mask_base  = ROOT / "tight_masks" / segment / view / "masks"
+    video_path = ROOT / "videos" / "pinhole" / segment / f"{view}_pinhole_fov100.mp4"
     out_dir    = out_root / segment / view
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -460,7 +381,7 @@ def process_segment(
 
     # Stereo calibration: only needed for right camera view
     if view == "right":
-        R_rl, t_rl, K_proj = calib if calib is not None else load_stereo_calib(segment)
+        R_rl, t_rl, K_proj = load_stereo_calib(segment)
     else:
         R_rl = t_rl = None
         K_proj = np.array(left_data["K_constant"])  # bleft camera K
@@ -469,12 +390,6 @@ def process_segment(
     video_fps = get_video_fps(video_path)
     step      = max(1, round(video_fps / target_fps))
     frame_indices = all_fi[::step]
-    if drop_last_sec > 0:
-        cutoff = max(all_fi) - drop_last_sec * video_fps
-        kept = [fi for fi in frame_indices if fi < cutoff]
-        print(f"Dropping last {drop_last_sec:g}s → cutoff frame {cutoff:.0f} "
-              f"({len(frame_indices) - len(kept)} frames removed)")
-        frame_indices = kept
     if n_frames is not None:
         frame_indices = frame_indices[:n_frames]
     print(f"Video {video_fps:.0f}fps → target {target_fps}fps → step {step} → {len(frame_indices)} frames")
@@ -535,13 +450,8 @@ def process_segment(
             kp2d_out = (kp2d_full - np.array([bx1, by1])) * np.array([sx, sy])
 
             crop_arr  = render_crop(frames[fi], by1, by2, bx1, bx2, out_size)
-            if mask_mode == "mesh":
-                mask_arr = render_mask_from_mesh(verts_cam, faces, K_proj,
-                                                 bx1, by1, cw, ch, out_size,
-                                                 dilate_px=dilate_px)
-            else:
-                mask_arr = render_mask(mask_dir / f"mask_{fi:06d}.png",
-                                       by1, by2, bx1, bx2, out_size)
+            mask_arr  = render_mask(mask_dir / f"mask_{fi:06d}.png",
+                                    by1, by2, bx1, bx2, out_size)
             skel_arr  = render_skeleton(kp2d_out, out_size)
             uv_arr    = render_uv(verts_cam, faces, vt, ft, K_proj,
                                   bx1, by1, cw, ch, out_size)
@@ -590,41 +500,6 @@ def process_segment(
     print(f"Saved {len(all_bbox)} entries → {label}")
 
 
-def process_calb_sequence(
-    seq_dir: Path, out_root: Path, write_h5: bool,
-    target_fps: float, scale: float, out_size: int,
-    n_frames: int = None, dilate_px: int = 5, drop_last_sec: float = 0.0,
-):
-    """Process a calb_video sequence (new layout, no segmentation masks).
-
-    Masks are rasterized from the MANO mesh silhouette (dilated by `dilate_px`).
-    """
-    seq_name = seq_dir.name
-    mano_dir = seq_dir / "mano_final"
-    extrinsics = seq_dir / "camera_params" / "stereo_extrinsics.npz"
-    video_for_view = {
-        "bleft": seq_dir / "videos" / "internal_bleft_source_right_pinhole_fov100.mp4",
-        "right": seq_dir / "videos" / "internal_right_source_bright_pinhole_fov100.mp4",
-    }
-    calib = load_stereo_calib_npz(extrinsics)   # (R, t, K_right) for right view
-
-    views = ["bleft", "right"]
-    print(f"calb_video sequence: {seq_name}  ({len(views)} views, mask=mesh dilate={dilate_px})")
-
-    h5w = H5Writer(out_root / "data.h5", out_size) if write_h5 else None
-    for view in views:
-        process_segment(
-            seq_name, view,
-            target_fps=target_fps, scale=scale, out_size=out_size,
-            n_frames=n_frames, out_root=out_root, h5w=h5w,
-            mano_dir=mano_dir, video_path=video_for_view[view],
-            calib=calib, mask_mode="mesh", dilate_px=dilate_px,
-            drop_last_sec=drop_last_sec,
-        )
-    if h5w is not None:
-        h5w.write()
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--segment", default="01_0519_03_all",
@@ -643,24 +518,11 @@ def main():
                         help="Write data.h5. Single segment → per-segment H5; "
                              "--all-segments → one combined data.h5 at out-dir root")
     parser.add_argument("--out-dir", default=str(ROOT / "hand_crops"))
-    parser.add_argument("--calb-seq", default=None,
-                        help="Path to a calb_video sequence dir (new layout). "
-                             "Uses MANO mesh silhouette for masks (no segmentation files).")
-    parser.add_argument("--dilate", type=int, default=5,
-                        help="Dilation iterations for mesh-silhouette masks (--calb-seq)")
-    parser.add_argument("--drop-last-sec", type=float, default=0.0,
-                        help="Discard frames in the last N seconds of the sequence")
     args = parser.parse_args()
 
     out_root = Path(args.out_dir)
     kwargs = dict(target_fps=args.fps, scale=args.scale, out_size=args.out_size,
                   n_frames=args.n_frames)
-
-    if args.calb_seq:
-        process_calb_sequence(Path(args.calb_seq), out_root, args.h5,
-                              dilate_px=args.dilate,
-                              drop_last_sec=args.drop_last_sec, **kwargs)
-        return
 
     if args.all_segments:
         # Discover all available segments from results directory

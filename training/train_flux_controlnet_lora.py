@@ -38,7 +38,7 @@ from tqdm.auto import tqdm
 from transformers import get_cosine_schedule_with_warmup
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from data.hand_dataset import make_dataloaders
+from data.hand_dataset import make_dataloaders, make_train_val_loaders
 
 logger = logging.getLogger(__name__)
 
@@ -236,8 +236,13 @@ def train(cfg):
     dtype = torch.bfloat16 if cfg.training.mixed_precision == "bf16" else torch.float32
     device = accelerator.device
 
-    if not os.path.exists(cfg.data.hdf5_path):
-        raise FileNotFoundError(f"Dataset not found at {cfg.data.hdf5_path}.")
+    # Separate train/val files (e.g. train on calib gloves, validate on ARCTIC) when
+    # cfg.data.val_hdf5 is set; otherwise split a single hdf5_path into train/val.
+    val_hdf5 = getattr(cfg.data, "val_hdf5", None)
+    train_hdf5 = getattr(cfg.data, "train_hdf5", None) if val_hdf5 else cfg.data.hdf5_path
+    for p in ([train_hdf5, val_hdf5] if val_hdf5 else [cfg.data.hdf5_path]):
+        if not os.path.exists(p):
+            raise FileNotFoundError(f"Dataset not found at {p}.")
 
     logger.info("Loading frozen FLUX.1-Fill components (bf16) …")
     vae, transformer = load_frozen_components(cfg.model.base_model, dtype, device)
@@ -307,13 +312,22 @@ def train(cfg):
     prompt_embeds        = emb_cache["prompt_embeds"].to(dtype=dtype)
     pooled_prompt_embeds = emb_cache["pooled_prompt_embeds"].to(dtype=dtype)
 
-    train_loader, val_loader = make_dataloaders(
-        cfg.data.hdf5_path,
-        image_size=cfg.training.image_size,
-        batch_size=cfg.training.batch_size,
-        val_split=cfg.data.val_split,
-        num_workers=cfg.data.num_workers,
-    )
+    if val_hdf5:
+        logger.info(f"Train on {train_hdf5}; validate on {val_hdf5} (separate files)")
+        train_loader, val_loader = make_train_val_loaders(
+            train_hdf5, val_hdf5,
+            image_size=cfg.training.image_size,
+            batch_size=cfg.training.batch_size,
+            num_workers=cfg.data.num_workers,
+        )
+    else:
+        train_loader, val_loader = make_dataloaders(
+            cfg.data.hdf5_path,
+            image_size=cfg.training.image_size,
+            batch_size=cfg.training.batch_size,
+            val_split=cfg.data.val_split,
+            num_workers=cfg.data.num_workers,
+        )
 
     # Single optimizer for ControlNet + transformer-LoRA params.
     trainable_params = (

@@ -1,0 +1,59 @@
+model:
+  # Local snapshot of the (gated) FLUX.1-Fill-dev cache, to avoid HF auth/gating at
+  # launch time on the server. Equivalent to "black-forest-labs/FLUX.1-Fill-dev".
+  base_model: "/data/hohs2/cache/huggingface/hub/models--black-forest-labs--FLUX.1-Fill-dev/snapshots/358293da0354175698b67ec8299acf928313a78a"
+  controlnet:
+    num_layers: 2
+    num_single_layers: 4
+    in_channels: 64
+    attention_head_dim: 128
+    num_attention_heads: 24
+    joint_attention_dim: 4096
+    pooled_projection_dim: 768
+    guidance_embeds: true
+
+training:
+  image_size: 512
+  batch_size: 2
+  gradient_accumulation_steps: 4      # effective batch = 8
+  num_train_epochs: 100
+  lr: 1.0e-4
+  lr_warmup_steps: 100
+  mixed_precision: bf16
+  gradient_checkpointing: false
+  save_every_iters: 400               # smaller train set -> save/eval more often
+  log_every: 10
+  eval_every_iters: 200
+  num_eval_samples: 4
+  num_inference_steps: 30
+  max_grad_norm: 1.0
+  controlnet_conditioning_scale: 1.0
+  lora:
+    rank: 32
+    alpha: 32
+    target_modules:
+      - to_q
+      - to_k
+      - to_v
+      - to_out.0
+      - add_q_proj
+      - add_k_proj
+      - add_v_proj
+      - to_add_out
+
+data:
+  # Train on the new (markerless-glove) calib set; validate on the prepared ARCTIC
+  # ego sequence (out-of-distribution, kept separate because calib is limited).
+  train_hdf5: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/datasets/calib_data.h5
+  val_hdf5: /data/hohs2/arctic/laptop_use_01_ego_sam.h5
+  num_workers: 2
+  val_split: 0.1                      # unused when val_hdf5 is set
+
+logging:
+  project: hohs_hand_flux
+  run_name: flux_fill_lora_calib
+
+output:
+  dir: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/outputs/flux_controlnet_lora
+  checkpoints: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/checkpoints/flux_controlnet_lora
+  embeddings_cache: ${oc.env:DATA_DIR,/data/${oc.env:USER}}/outputs/flux_controlnet/text_embeddings.pt

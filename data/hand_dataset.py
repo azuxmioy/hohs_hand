@@ -255,3 +255,29 @@ def make_dataloaders(hdf5_path, image_size=256, batch_size=8,
     val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
                               num_workers=num_workers, pin_memory=True, **extra)
     return train_loader, val_loader
+
+
+def _loader_extra(num_workers):
+    if num_workers > 0:
+        import torch.multiprocessing as mp
+        ctx = mp.get_context("spawn")
+        return {"timeout": 300, "persistent_workers": True,
+                "multiprocessing_context": ctx}
+    return {}
+
+
+def make_train_val_loaders(train_hdf5, val_hdf5, image_size=512, batch_size=8,
+                           num_workers=4):
+    """Loaders from SEPARATE files: train on `train_hdf5` (augmented), validate on
+    `val_hdf5` (no augmentation, all samples). Used when the validation set comes
+    from a different distribution than training (e.g. train on calib gloves, validate
+    on the prepared ARCTIC sequence)."""
+    train_ds = HandDataset(train_hdf5, image_size=image_size, augment=True)
+    val_ds   = HandDataset(val_hdf5,   image_size=image_size, augment=False)
+    extra = _loader_extra(num_workers)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                              num_workers=num_workers, pin_memory=True,
+                              drop_last=True, **extra)
+    val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=True, **extra)
+    return train_loader, val_loader

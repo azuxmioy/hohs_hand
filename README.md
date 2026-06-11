@@ -46,6 +46,12 @@ scripts/
   launch_flux_train.sh                Launcher for 256-px training
   launch_flux_train_512.sh            Launcher for 512-px training (precompute + train)
   test_flux_fill_inpaint.py           Standalone inpainting smoke test
+  generate_hand_crops.py              Build the conditioning HDF5 from MANO + masks
+inference/
+  arctic_make_conditions.py           ARCTIC GT-MANO + camera -> conditioning HDF5
+  sam2_masks.py                       Occlusion-aware SAM2 hand masks (wrist prompt)
+  arctic_inpaint.py                   Inpaint with a trained ControlNet+LoRA checkpoint
+  arctic_{cfg,steps,ckpt}_scan.py     Guidance / steps / checkpoint ablations
 ```
 
 ## Training at 512 × 512 (recommended)
@@ -100,6 +106,57 @@ resized in the loader):
 Augmentation is **random 90 ° rotation** (no flip, since flip changes
 left/right hand identity); for the 512 pipeline this is applied in
 latent space after the cache is built.
+
+## Data preparation
+
+`scripts/generate_hand_crops.py` builds the conditioning HDF5 from MANO results +
+masks: for each frame/hand it computes a square crop from the 2D keypoints
+(`--scale`), renders the 21-keypoint skeleton and the MANO-mesh UV map, crops the
+tight hand mask, and writes the `data.h5` keys above. The training set was made
+with `--scale 3 --out-size 512` (the crop is 3× the keypoint bbox, so the hand sits
+small with surrounding context — match this scale when preparing new data).
+
+## Training with a separate validation set
+
+By default a single `hdf5_path` is split into train/val. To train on one set and
+**validate on a different distribution**, set `data.train_hdf5` + `data.val_hdf5`
+in the config (see `configs/train_flux_a100_lora_calib.yaml`, which trains on a new
+glove set and validates on a prepared ARCTIC sequence). Implemented by
+`data/hand_dataset.py:make_train_val_loaders`; each run writes a timestamped
+checkpoint dir and logs `val/samples` to wandb.
+
+Launch notes for shared servers (gated model + strict commit accounting):
+
+```bash
+source /data/$USER/envs/hohs_hand/bin/activate     # use the venv, not system python
+GPU=$(nvidia-smi --query-gpu=index,utilization.gpu,memory.used --format=csv,noheader,nounits \
+      | awk -F', ' '$2==0 && $3<100 {print $1; exit}')   # one idle GPU; run a single job
+HF_HOME=/data/$USER/cache/huggingface \
+MALLOC_ARENA_MAX=2 TORCHINDUCTOR_COMPILE_THREADS=1 \
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True CUDA_VISIBLE_DEVICES=$GPU \
+  python training/train_flux_controlnet_lora.py --config configs/train_flux_a100_lora_calib.yaml
+```
+
+`HF_HOME` must be set explicitly (a non-interactive shell doesn't source `~/.bashrc`,
+so the gated FLUX repo would otherwise 401); `MALLOC_ARENA_MAX` / `expandable_segments`
+keep the model load under the host's memory-commit limit.
+
+## Inference on unseen data (ARCTIC)
+
+`inference/` reproduces the conditioning recipe on a dataset the model never saw and
+inpaints it with a trained checkpoint:
+
+1. `arctic_make_conditions.py` — ARCTIC GT-MANO + camera → a `data.h5`-compatible
+   conditioning HDF5 (`smplx` MANO mesh, world→cam projection; supports allocentric
+   views and the egocentric fisheye via per-frame extrinsics + distortion). Use
+   `--scale 3` and the egocentric `--view 0` to stay closest to the training domain.
+2. `sam2_masks.py` — replaces the MANO mesh-silhouette mask with an occlusion-aware
+   SAM2 mask (single wrist-point prompt, hand-scale selection, clipped to the mesh).
+3. `arctic_inpaint.py` — loads ControlNet + transformer-LoRA from a checkpoint, reuses
+   `HandDataset(augment=False)`, runs the denoise loop. **Guidance must stay ≈ 30**
+   (FLUX is guidance-distilled and training pinned `guidance=30`; other values break).
+
+Ablation helpers: `arctic_cfg_scan.py`, `arctic_steps_scan.py`, `arctic_ckpt_scan.py`.
 
 ## Hardware notes
 

@@ -14,3 +14,10 @@ data/celeba*
 *.pth
 *.ckpt
 .DS_Store
+
+# datasets + large/binary artifacts (kept out of git)
+*.h5
+*.zip
+samples_*.png
+box_use_*/
+inference/_preview/
