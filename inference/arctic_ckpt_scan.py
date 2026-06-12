@@ -32,6 +32,36 @@ from inference.arctic_inpaint import to_uint8
 from inference.arctic_cfg_scan import denoise
 
 
+def _font(size):
+    from PIL import ImageFont
+    for p in ["DejaVuSans-Bold.ttf",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+              "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]:
+        try:
+            return ImageFont.truetype(p, size)
+        except Exception:
+            pass
+    return ImageFont.load_default()
+
+
+def label_grid(rows, col_labels, row_labels, caption, panel):
+    """Stack `rows` into a grid annotated with a column header band, a per-row label
+    (top-left of each row), and a bottom caption — so the figure is self-describing."""
+    from PIL import Image, ImageDraw
+    grid = np.concatenate(rows, axis=0)
+    H, W = grid.shape[:2]
+    cw = W // len(col_labels)
+    head = Image.new("RGB", (W, 30), (20, 20, 20)); dh = ImageDraw.Draw(head)
+    for i, lab in enumerate(col_labels):
+        dh.text((i * cw + 6, 6), lab, fill=(255, 255, 255), font=_font(20))
+    g = Image.fromarray(grid.copy()); dg = ImageDraw.Draw(g)
+    for r, rl in enumerate(row_labels):
+        dg.text((6, r * panel + 6), rl, fill=(255, 255, 0), font=_font(22))
+    cap = Image.new("RGB", (W, 26), (20, 20, 20)); dc = ImageDraw.Draw(cap)
+    dc.text((6, 4), caption, fill=(190, 190, 190), font=_font(16))
+    return np.concatenate([np.array(head), np.array(g), np.array(cap)], axis=0)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/train_flux_a100_lora.yaml")
@@ -88,10 +118,14 @@ def main():
         torch.cuda.empty_cache()
 
     rows = [np.concatenate(panels[idx], axis=1) for idx in indices]
+    col_labels = ["original", "masked", "condition"] + [f"step {st}" for st in ckpt_steps]
+    row_labels = [f"#{idx}" for idx in indices]
+    caption = (f"run {run_dir.name} | val {Path(args.h5).name} | guidance {args.guidance:g} | "
+               f"{args.num_steps} steps | seed {args.seed}")
+    out = label_grid(rows, col_labels, row_labels, caption, panel=args.image_size)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(np.concatenate(rows, axis=0)).save(args.out)
-    print(f"Wrote {args.out}  cols: original | masked | condition | " +
-          " | ".join(f"step{st}" for st in ckpt_steps))
+    Image.fromarray(out).save(args.out)
+    print(f"Wrote {args.out}  cols: {' | '.join(col_labels)}")
 
 
 if __name__ == "__main__":

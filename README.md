@@ -116,47 +116,81 @@ tight hand mask, and writes the `data.h5` keys above. The training set was made
 with `--scale 3 --out-size 512` (the crop is 3× the keypoint bbox, so the hand sits
 small with surrounding context — match this scale when preparing new data).
 
-## Training with a separate validation set
+## Reproduce: training (separate train/val sets)
 
 By default a single `hdf5_path` is split into train/val. To train on one set and
 **validate on a different distribution**, set `data.train_hdf5` + `data.val_hdf5`
-in the config (see `configs/train_flux_a100_lora_calib.yaml`, which trains on a new
-glove set and validates on a prepared ARCTIC sequence). Implemented by
-`data/hand_dataset.py:make_train_val_loaders`; each run writes a timestamped
-checkpoint dir and logs `val/samples` to wandb.
-
-Launch notes for shared servers (gated model + strict commit accounting):
+in the config — `configs/train_flux_a100_lora_calib.yaml` trains on a new
+(markerless-glove) set and validates on a prepared ARCTIC sequence. Implemented by
+`data/hand_dataset.py:make_train_val_loaders`; each run writes a **timestamped**
+checkpoint dir (`<checkpoints>/<run_id>/step_XXXXXX/{controlnet, transformer_lora.pt}`)
+and logs `val/samples` to wandb.
 
 ```bash
+# 1. Prepare the HDF5s (see Data preparation above): a train set and a held-out
+#    validation set. Point the config at them:
+#      data.train_hdf5: .../calib_data.h5            # what you train on
+#      data.val_hdf5:   .../laptop_use_01_ego_sam.h5 # held-out ARCTIC (built below)
+
+# 2. Launch on a shared server (single GPU). Run inside your own SSH session.
 source /data/$USER/envs/hohs_hand/bin/activate     # use the venv, not system python
 GPU=$(nvidia-smi --query-gpu=index,utilization.gpu,memory.used --format=csv,noheader,nounits \
-      | awk -F', ' '$2==0 && $3<100 {print $1; exit}')   # one idle GPU; run a single job
+      | awk -F', ' '$2==0 && $3<100 {print $1; exit}')   # one idle GPU; run ONE job
 HF_HOME=/data/$USER/cache/huggingface \
 MALLOC_ARENA_MAX=2 TORCHINDUCTOR_COMPILE_THREADS=1 \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True CUDA_VISIBLE_DEVICES=$GPU \
-  python training/train_flux_controlnet_lora.py --config configs/train_flux_a100_lora_calib.yaml
+  nohup python training/train_flux_controlnet_lora.py \
+  --config configs/train_flux_a100_lora_calib.yaml > train.log 2>&1 &
 ```
 
-`HF_HOME` must be set explicitly (a non-interactive shell doesn't source `~/.bashrc`,
-so the gated FLUX repo would otherwise 401); `MALLOC_ARENA_MAX` / `expandable_segments`
-keep the model load under the host's memory-commit limit.
+Gotchas that matter on a shared host: `HF_HOME` **must** be set explicitly (a
+non-interactive shell doesn't source `~/.bashrc`, so the gated FLUX repo would 401);
+`MALLOC_ARENA_MAX` / `expandable_segments` keep the model load under the host's
+memory-commit limit (`vm.overcommit_memory=2`); pick a free GPU and run **exactly one**
+job (two on the same GPU → CUDA OOM). Warm-restart from a previous run's weights with
+`--resume_from <run>/step_XXXXXX`.
 
-## Inference on unseen data (ARCTIC)
+The markerless-glove model converges by ~step 2000 and is stable thereafter; the
+**chosen final checkpoint is `step_005200`** (compare iterations with
+`inference/arctic_ckpt_scan.py`).
 
-`inference/` reproduces the conditioning recipe on a dataset the model never saw and
-inpaints it with a trained checkpoint:
+## Reproduce: inference on unseen data (ARCTIC)
 
-1. `arctic_make_conditions.py` — ARCTIC GT-MANO + camera → a `data.h5`-compatible
-   conditioning HDF5 (`smplx` MANO mesh, world→cam projection; supports allocentric
-   views and the egocentric fisheye via per-frame extrinsics + distortion). Use
-   `--scale 3` and the egocentric `--view 0` to stay closest to the training domain.
-2. `sam2_masks.py` — replaces the MANO mesh-silhouette mask with an occlusion-aware
-   SAM2 mask (single wrist-point prompt, hand-scale selection, clipped to the mesh).
-3. `arctic_inpaint.py` — loads ControlNet + transformer-LoRA from a checkpoint, reuses
-   `HandDataset(augment=False)`, runs the denoise loop. **Guidance must stay ≈ 30**
-   (FLUX is guidance-distilled and training pinned `guidance=30`; other values break).
+Three steps turn an ARCTIC sequence into inpainted hands with a trained checkpoint.
+Run in the `hohs_hand` env with `HF_HOME` set (as above).
 
-Ablation helpers: `arctic_cfg_scan.py`, `arctic_steps_scan.py`, `arctic_ckpt_scan.py`.
+```bash
+SUBJ=s01; SEQ=laptop_use_01            # an egocentric, low-occlusion (hand-back-up) seq
+CKPT=/data/$USER/checkpoints/flux_controlnet_lora/20260611_235529/step_005200  # final model
+EMB=/data/$USER/outputs/flux_controlnet/text_embeddings.pt
+
+# 1. ARCTIC GT-MANO + camera -> data.h5-compatible conditioning (egocentric, scale 3)
+python inference/arctic_make_conditions.py \
+  --arctic-root  /data/$USER/datasets/arctic_dl/extracted \
+  --mano-dir     /data/$USER/datasets/arctic_dl/mano_v1_2/models \
+  --uv-left  MANO_UV_left.obj --uv-right MANO_UV_right.obj \
+  --subject $SUBJ --seq $SEQ --view 0 --scale 3 \
+  --out cond_${SEQ}.h5
+
+# 2. Occlusion-aware SAM2 hand mask (single wrist-point prompt), training-matched dilation
+python inference/sam2_masks.py \
+  --in-h5 cond_${SEQ}.h5 --out-h5 cond_${SEQ}_sam.h5 --mesh-pad 3 --dilate 8
+
+# 3. Inpaint (guidance must stay ~30; 30 steps is plenty)
+python inference/arctic_inpaint.py \
+  --checkpoint $CKPT --h5 cond_${SEQ}_sam.h5 --embeddings $EMB \
+  --out-dir results_${SEQ} --num-samples 8 --num-steps 30 --guidance 30
+```
+
+- `arctic_make_conditions.py` builds the MANO mesh via `smplx` and projects with
+  `world2cam`/`intris_mat` (allocentric) or per-frame `world2ego` + `K_ego` + fisheye
+  distortion (egocentric `--view 0`). `--scale 3` matches the training crop framing.
+- `arctic_inpaint.py` loads ControlNet + transformer-LoRA and reuses
+  `HandDataset(augment=False)`. **Keep `--guidance ≈ 30`** — FLUX is guidance-distilled
+  and training pinned `guidance=30`, so other values collapse to noise.
+
+Ablation helpers (guidance / steps / training-iteration sweeps, with labeled grids):
+`inference/arctic_cfg_scan.py`, `arctic_steps_scan.py`, `arctic_ckpt_scan.py`.
 
 ## Hardware notes
 
