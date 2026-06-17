@@ -49,6 +49,7 @@ scripts/
   generate_hand_crops.py              Build the conditioning HDF5 from MANO + masks
 inference/
   arctic_make_conditions.py           ARCTIC GT-MANO + camera -> conditioning HDF5
+  palm_make_conditions.py             PALM (cameras.npy + poses.npy) -> conditioning HDF5
   sam2_masks.py                       Occlusion-aware SAM2 hand masks (wrist prompt)
   arctic_inpaint.py                   Inpaint with a trained ControlNet+LoRA checkpoint
   arctic_{cfg,steps,ckpt}_scan.py     Guidance / steps / checkpoint ablations
@@ -189,8 +190,39 @@ python inference/arctic_inpaint.py \
   `HandDataset(augment=False)`. **Keep `--guidance ≈ 30`** — FLUX is guidance-distilled
   and training pinned `guidance=30`, so other values collapse to noise.
 
-Ablation helpers (guidance / steps / training-iteration sweeps, with labeled grids):
-`inference/arctic_cfg_scan.py`, `arctic_steps_scan.py`, `arctic_ckpt_scan.py`.
+### PALM (studio bare-hand capture)
+
+`inference/palm_make_conditions.py` does the same for the PALM dataset (per subject:
+`cameras.npy` with 7 cams `K`/`dist`/`Rt`, `poses.npy` with MANO `betas/global_orient/
+hand_pose/transl`, plus `images/`, `masks/`, `mano/`). PALM is right-hand only and the
+cameras are a fixed rig, so the front/dorsal views (e.g. `MCU_03`, `MCU_06`) frame the
+hand best; side-on views (`MCU_01/07`) are foreshortened.
+
+```bash
+python inference/palm_make_conditions.py \
+  --subj-dir /data/$USER/palm/<unzipped_subject_dir> \
+  --mano-dir /data/$USER/datasets/arctic_dl/mano_v1_2/models \
+  --uv-right MANO_UV_right.obj \
+  --gesture 000001 --scale 3 --mask-dilate 8 --debug \
+  --out cond_palm.h5
+# then sam2_masks.py (optional) + arctic_inpaint.py, exactly as above.
+```
+
+### Ablation / comparison helpers
+
+`inference/arctic_cfg_scan.py`, `arctic_steps_scan.py`, `arctic_ckpt_scan.py` sweep
+guidance / steps / training-iteration on any conditioning h5 and write a **labeled**
+grid (column headers, row ids, run/params caption). `arctic_ckpt_scan.py` takes
+`--viz gen,blend,diff` (comma list): `gen` = raw inpaint, `blend` = 50% input + 50%
+inpaint, `diff` = brightened `|inpaint − input|` (handy when the inpaint domain differs
+from the input, e.g. glove model on bare-hand images). Example:
+
+```bash
+python inference/arctic_ckpt_scan.py \
+  --run-dir <checkpoints>/<run_id> --steps 800,3600,5200 \
+  --h5 cond_palm.h5 --embeddings <embeddings.pt> \
+  --indices 2,3,5 --viz gen,diff --out ckpt_scan.png
+```
 
 ## Hardware notes
 
