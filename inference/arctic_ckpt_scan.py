@@ -44,6 +44,19 @@ def _font(size):
     return ImageFont.load_default()
 
 
+def viz_panel(img, gen, mode):
+    """img/gen: (3,H,W) in [-1,1]. Returns a uint8 HxWx3 panel.
+    gen=raw inpaint; blend=0.5*input+0.5*inpaint; diff=|inpaint-input| (brightened)."""
+    if mode == "blend":
+        t = 0.5 * img + 0.5 * gen
+    elif mode == "diff":
+        d = (gen - img).abs()                     # [0,2] per channel
+        t = (d * 1.5).clamp(0, 1) * 2 - 1         # 0->black, large diff->white
+    else:
+        t = gen
+    return to_uint8(t)
+
+
 def label_grid(rows, col_labels, row_labels, caption, panel):
     """Stack `rows` into a grid annotated with a column header band, a per-row label
     (top-left of each row), and a bottom caption — so the figure is self-describing."""
@@ -75,12 +88,15 @@ def main():
     ap.add_argument("--num-steps", type=int, default=30)
     ap.add_argument("--image-size", type=int, default=512)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--viz", default="gen",
+                    help="comma list of {gen,blend,diff} rendered per checkpoint, e.g. 'gen,diff'")
     args = ap.parse_args()
 
     cfg = OmegaConf.load(args.config)
     dtype, device = torch.bfloat16, "cuda"
     indices = [int(x) for x in args.indices.split(",")]
     ckpt_steps = [int(x) for x in args.steps.split(",")]
+    viz_modes = [m.strip() for m in args.viz.split(",") if m.strip()]
     run_dir = Path(args.run_dir)
 
     print("Loading VAE + base transformer …")
@@ -109,19 +125,21 @@ def main():
         controlnet = FluxControlNetModel.from_pretrained(ckpt / "controlnet", torch_dtype=dtype).to(device)
         controlnet.eval()
         for idx in indices:
-            _, _, _, gen = denoise(transformer, vae, controlnet, ds[idx], pe, ppe,
-                                   device, dtype, args.image_size, args.num_steps,
-                                   args.guidance, seed=args.seed + idx)
-            panels[idx].append(to_uint8(gen))
+            img, _, _, gen = denoise(transformer, vae, controlnet, ds[idx], pe, ppe,
+                                     device, dtype, args.image_size, args.num_steps,
+                                     args.guidance, seed=args.seed + idx)
+            for m in viz_modes:
+                panels[idx].append(viz_panel(img, gen, m))
             print(f"  idx {idx} done")
         del controlnet
         torch.cuda.empty_cache()
 
     rows = [np.concatenate(panels[idx], axis=1) for idx in indices]
-    col_labels = ["original", "masked", "condition"] + [f"step {st}" for st in ckpt_steps]
+    col_labels = ["original", "masked", "condition"] + \
+        [f"s{st} [{m}]" for st in ckpt_steps for m in viz_modes]
     row_labels = [f"#{idx}" for idx in indices]
     caption = (f"run {run_dir.name} | val {Path(args.h5).name} | guidance {args.guidance:g} | "
-               f"{args.num_steps} steps | seed {args.seed}")
+               f"{args.num_steps} steps | seed {args.seed} | viz={args.viz}")
     out = label_grid(rows, col_labels, row_labels, caption, panel=args.image_size)
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(out).save(args.out)
