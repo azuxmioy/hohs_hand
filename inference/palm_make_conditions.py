@@ -64,7 +64,8 @@ def main():
     verts_w, joints_w = verts_w[0], joints_w[0]
 
     acc = {k: [] for k in ["crops", "masks", "skeletons", "uvs", "kp2d", "kp3d",
-                           "is_right", "frame_keys", "side", "view"]}
+                           "is_right", "frame_keys", "side", "view",
+                           "global_orient", "hand_pose", "betas", "transl"]}
     for cam_id in args.cameras.split(","):
         cam = cams[cam_id]
         Rt = np.asarray(cam["Rt"], dtype=np.float32)
@@ -104,6 +105,10 @@ def main():
         acc["kp2d"].append(kp2d_out.astype(np.float32)); acc["kp3d"].append(joints_cam.astype(np.float32))
         acc["is_right"].append(1); acc["frame_keys"].append(f"{subj.name}/{cam_id}/{args.gesture}")
         acc["side"].append("right"); acc["view"].append(cam_id)
+        acc["global_orient"].append(rot[0].astype(np.float32))
+        acc["hand_pose"].append(pose[0].astype(np.float32))
+        acc["betas"].append(betas[0].astype(np.float32))
+        acc["transl"].append(trans[0].astype(np.float32))
         print(f"  {cam_id} done")
 
     n = len(acc["crops"])
@@ -123,6 +128,10 @@ def main():
         f.create_dataset("frame_keys", data=np.array(acc["frame_keys"], dtype=object), dtype=dt)
         f.create_dataset("side", data=np.array(acc["side"], dtype=object), dtype=dt)
         f.create_dataset("view", data=np.array(acc["view"], dtype=object), dtype=dt)
+        f.create_dataset("global_orient", data=np.stack(acc["global_orient"]), dtype=np.float32)
+        f.create_dataset("hand_pose", data=np.stack(acc["hand_pose"]), dtype=np.float32)
+        f.create_dataset("betas", data=np.stack(acc["betas"]), dtype=np.float32)
+        f.create_dataset("transl", data=np.stack(acc["transl"]), dtype=np.float32)
         f.attrs["keypoint_names"] = json.dumps(KEYPOINT_NAMES)
         f.attrs["output_size"] = args.out_size
     print(f"Wrote {args.out}  ({n} samples)")
