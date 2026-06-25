@@ -30,7 +30,7 @@ DATA="${DATA_DIR:-/data/${USER}}"
 
 # PALM subjects
 PALM_SUBJ_DIR="${PALM_SUBJ_DIR:-${DATA}/palm/subjects}"
-NUM_GESTURES="${NUM_GESTURES:-42}"
+NUM_GESTURES="${NUM_GESTURES:-56}"
 
 # MANO assets
 MANO_DIR="${DATA}/datasets/arctic_dl/mano_v1_2/models"
@@ -48,6 +48,7 @@ IMG_DIR="${OUT_ROOT}/inpainted"
 NPZ_OUT="${OUT_ROOT}/train_hamer.npz"
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+export HF_HOME="${HF_HOME:-/data/${USER}/cache/huggingface}"
 
 # ─── Step 0: Download PALM subjects (optional) ──────────────────────────
 if [ -n "${PALM_DOWNLOAD:-}" ]; then
