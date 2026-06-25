@@ -1,0 +1,37 @@
+seed: 42
+
+paths:
+  hamer_root: third_party/hamer
+  hamer_checkpoint: third_party/hamer/_DATA/hamer_ckpts/checkpoints/hamer.ckpt
+  hamer_model_config: null
+  train_npz: data/artic/processed/train_hamer.npz
+  val_npz: data/artic/processed/val_hamer.npz
+  image_root: data/artic/images
+  output_dir: outputs/artic_hamer
+
+data:
+  rescale_factor: 2.0
+
+train:
+  accelerator: auto
+  devices: 1
+  precision: 16-mixed
+  batch_size: 8
+  num_workers: 4
+  prefetch_factor: 2
+  max_steps: 10000
+  lr: 1.0e-5
+  weight_decay: 1.0e-4
+  freeze_backbone: true
+  log_every_n_steps: 50
+  val_check_interval: 500
+  checkpoint_every_n_steps: 500
+
+loss_weights:
+  KEYPOINTS_3D: 0.10
+  KEYPOINTS_2D: 0.01
+  GLOBAL_ORIENT: 0.001
+  HAND_POSE: 0.001
+  BETAS: 0.0005
+  ADVERSARIAL: 0.0
+

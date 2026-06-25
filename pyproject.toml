@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hohs-mano-regressor"
+version = "0.1.0"
+description = "Fine-tuning scaffold for a HaMeR MANO hand regressor on ARTIC 3D hand ground truth."
+readme = "README.md"
+requires-python = ">=3.10,<3.12"
+dependencies = [
+  "numpy>=1.23",
+  "opencv-python>=4.8",
+  "pytorch-lightning>=2.0",
+  "PyYAML>=6.0",
+  "tensorboard>=2.12",
+  "tqdm>=4.66",
+  "yacs>=0.1.8",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+hohs-convert-artic = "hohs_mano_regressor.data.artic_manifest:main"
+hohs-train-artic = "hohs_mano_regressor.train_artic:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

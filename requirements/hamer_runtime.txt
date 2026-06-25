@@ -1,0 +1,25 @@
+# HaMeR runtime/training dependencies for ARTIC fine-tuning.
+#
+# Detectron2, ViTPose/MMPose, and mmcv are intentionally not installed by
+# default on AIT. HaMeR uses them for demo-time hand/body localization, while
+# ARTIC fine-tuning uses annotated crops and only needs the regressor path.
+gdown
+numpy==1.23.5
+opencv-python==4.8.1.78
+pyrender
+pytorch-lightning
+scikit-image==0.22.0
+scipy<1.15
+smplx==0.1.28
+yacs
+chumpy @ git+https://github.com/mattloper/chumpy
+timm
+einops
+xtcocotools
+pandas
+hydra-core
+hydra-submitit-launcher
+hydra-colorlog
+pyrootutils
+rich
+webdataset
